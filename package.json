@@ -1,0 +1,26 @@
+{
+  "name": "cozycode",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "bun run --cwd apps/desktop dev",
+    "build": "bun run --cwd apps/desktop build",
+    "typecheck": "tsc -p packages/protocol/tsconfig.json && tsc -p packages/core/tsconfig.json && tsc -p apps/desktop/tsconfig.json",
+    "test": "bun test",
+    "agent": "bun packages/core/scripts/agent-run.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.0"
+  },
+  "overrides": {
+    "@types/node": "26.1.0"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  }
+}
