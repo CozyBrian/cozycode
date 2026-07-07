@@ -1,5 +1,7 @@
 import { defineConfig } from "electron-vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
+import { fileURLToPath } from "node:url";
 
 /**
  * The main and preload processes are bundled for Node (electron-vite marks
@@ -21,6 +23,11 @@ export default defineConfig({
     },
   },
   renderer: {
-    plugins: [react()],
+    plugins: [react(), tailwindcss()],
+    resolve: {
+      alias: {
+        "@": fileURLToPath(new URL("./src/renderer/src", import.meta.url)),
+      },
+    },
   },
 });

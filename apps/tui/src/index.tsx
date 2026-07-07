@@ -1,9 +1,10 @@
 #!/usr/bin/env bun
-import { render } from "ink";
+import { createCliRenderer } from "@opentui/core";
+import { createRoot } from "@opentui/react";
 import { App } from "./app.tsx";
 import { resolveConfig } from "./config.ts";
 
-function main(): void {
+async function main(): Promise<void> {
   let resolved;
   try {
     resolved = resolveConfig(process.argv.slice(2), process.env);
@@ -12,15 +13,26 @@ function main(): void {
     process.exit(1);
   }
 
-  const { waitUntilExit } = render(
+  const renderer = await createCliRenderer({
+    screenMode: "alternate-screen",
+    exitOnCtrlC: false,
+    backgroundColor: "#0a0a0a",
+  });
+  const root = createRoot(renderer);
+  const exit = () => {
+    root.unmount();
+    renderer.destroy();
+    process.exit(0);
+  };
+
+  root.render(
     <App
       config={resolved.session}
       model={resolved.model}
       workspaceRoot={resolved.workspaceRoot}
+      onExit={exit}
     />,
   );
-
-  void waitUntilExit();
 }
 
-main();
+void main();

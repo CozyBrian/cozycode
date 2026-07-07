@@ -8,12 +8,26 @@ import { SessionManager } from "./session-manager.ts";
 const settings = new SettingsStore();
 let manager: SessionManager | null = null;
 
+const isMac = process.platform === "darwin";
+
 function createWindow(): void {
   const win = new BrowserWindow({
     width: 1100,
     height: 780,
     show: false,
     title: "cozycode",
+    // On macOS: unified title bar with inset traffic lights + whole-window
+    // vibrancy. `transparent: true` is intentionally avoided (it has known
+    // focus/repaint bugs when combined with a title-bar style); a fully
+    // transparent backgroundColor lets the vibrancy layer show through instead.
+    ...(isMac
+      ? {
+          titleBarStyle: "hiddenInset" as const,
+          vibrancy: "under-window" as const,
+          visualEffectState: "active" as const,
+          backgroundColor: "#00000000",
+        }
+      : { backgroundColor: "#16181d" }),
     webPreferences: {
       preload: join(import.meta.dirname, "../preload/index.mjs"),
       sandbox: false,

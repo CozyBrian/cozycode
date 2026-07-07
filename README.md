@@ -13,6 +13,8 @@ packages/
   core/       @cozycode/core     — the engine: agent loop, tools, permissions, sessions
 apps/
   desktop/    @cozycode/desktop  — Electron app (core in main process, React renderer)
+                                    macOS: unified title bar + window vibrancy;
+                                    UI on Vite 7 + Tailwind v4 + shadcn/ui
   tui/        @cozycode/tui      — terminal UI (Ink), embeds the core directly
 ```
 

@@ -5,6 +5,7 @@ import { foldEvent, userItem, type TranscriptItem } from "./transcript.ts";
 import { Settings } from "./components/Settings.tsx";
 import { ApprovalModal } from "./components/ApprovalModal.tsx";
 import { ToolCard } from "./components/ToolCard.tsx";
+import { Button } from "@/components/ui/button";
 
 export function App() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -95,12 +96,12 @@ export function App() {
           {settings?.model} · {truncatePath(settings?.workspaceRoot)}
         </div>
         <div className="actions">
-          <button type="button" onClick={newChat}>
+          <Button variant="ghost" size="sm" onClick={newChat}>
             New chat
-          </button>
-          <button type="button" onClick={() => setShowSettings(true)}>
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setShowSettings(true)}>
             Settings
-          </button>
+          </Button>
         </div>
       </header>
 

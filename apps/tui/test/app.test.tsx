@@ -2,11 +2,12 @@ import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { render } from "ink-testing-library";
+import { testRender } from "@opentui/react/test-utils";
 import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import type { PermissionPolicy, SessionConfig } from "@cozycode/protocol";
 import { App } from "../src/app.tsx";
+import { Markdown } from "../src/components/Markdown.tsx";
 
 const usage = { inputTokens: 5, outputTokens: 5, totalTokens: 10 } as const;
 const step = (parts: LanguageModelV4StreamPart[]) => ({
@@ -65,15 +66,17 @@ async function waitFor(fn: () => boolean | Promise<boolean>, timeout = 3000): Pr
   throw new Error("waitFor timed out");
 }
 
-function renderApp(policy: PermissionPolicy, content: string) {
+async function renderApp(policy: PermissionPolicy, content: string) {
   const cfg = config(policy);
-  return render(
+  return testRender(
     <App
       config={cfg}
       model={cfg.model}
       workspaceRoot={root}
       sessionOptions={{ model: twoStepWriteModel(content) }}
+      onExit={() => {}}
     />,
+    { width: 100, height: 30 },
   );
 }
 
@@ -85,58 +88,84 @@ const fileExists = (name: string) =>
 
 describe("TUI App (integration, mock model)", () => {
   test("renders the status bar and composer on launch", async () => {
-    const { lastFrame, unmount } = renderApp(
+    const app = await renderApp(
       { defaultDecision: "allow", tools: {} },
       "x",
     );
-    await sleep(50);
-    const frame = lastFrame() ?? "";
+    await app.flush();
+    const frame = app.captureCharFrame();
     expect(frame).toContain("cozycode");
-    expect(frame).toContain("Describe a task");
-    unmount();
+    expect(frame).toContain("Ask anything");
+    app.renderer.destroy();
   });
 
-  test("runs an allowed tool call and streams the answer", async () => {
-    const { lastFrame, stdin, unmount } = renderApp(
+  test("runs an allowed tool call and renders the inline diff", async () => {
+    const app = await renderApp(
       { defaultDecision: "allow", tools: { write_file: "allow" } },
       "auto-approved content",
     );
 
-    await sleep(50);
-    stdin.write("make the file");
-    await sleep(20);
-    stdin.write("\r");
+    await app.flush();
+    await app.mockInput.typeText("make the file");
+    app.mockInput.pressEnter();
 
     await waitFor(() => fileExists("out.txt"));
     expect(await readFile(join(root, "out.txt"), "utf8")).toBe("auto-approved content");
-
-    await waitFor(() => (lastFrame() ?? "").includes("Done writing."));
-    const frame = lastFrame() ?? "";
+    await app.flush();
+    const frame = app.captureCharFrame();
     expect(frame).toContain("write_file");
     expect(frame).toContain("make the file");
-    unmount();
+    expect(frame).toContain("auto-approved content");
+    app.renderer.destroy();
+  });
+
+  test("renders assistant markdown without crashing", async () => {
+    const app = await testRender(
+      <box width={80} height={10}>
+        <Markdown text={"**Done**\n\n- item"} />
+      </box>,
+      { width: 80, height: 10 },
+    );
+    await app.waitForFrame((frame) => frame.includes("item"));
+    expect(app.captureCharFrame()).toContain("Done");
+    app.renderer.destroy();
   });
 
   test("prompts for approval and applies the action once allowed", async () => {
-    const { lastFrame, stdin, unmount } = renderApp(
+    const app = await renderApp(
       { defaultDecision: "ask", tools: { write_file: "ask" } },
       "approved content",
     );
 
-    await sleep(50);
-    stdin.write("make the file");
-    await sleep(20);
-    stdin.write("\r");
+    await app.flush();
+    await app.mockInput.typeText("make the file");
+    app.mockInput.pressEnter();
 
     // The approval prompt should appear and the file must NOT exist yet.
-    await waitFor(() => (lastFrame() ?? "").includes("Approve action?"));
+    await app.waitForFrame((frame) => frame.includes("Approve action?"));
     expect(await fileExists("out.txt")).toBe(false);
 
     // "Allow once" is the first option — pressing enter selects it.
-    stdin.write("\r");
+    app.mockInput.pressEnter();
 
     await waitFor(() => fileExists("out.txt"));
     expect(await readFile(join(root, "out.txt"), "utf8")).toBe("approved content");
-    unmount();
+    app.renderer.destroy();
+  });
+
+  test("handles help slash command without sending a model message", async () => {
+    const app = await renderApp(
+      { defaultDecision: "allow", tools: {} },
+      "x",
+    );
+
+    await app.flush();
+    await app.mockInput.typeText("/help");
+    app.mockInput.pressEnter();
+
+    await app.waitForFrame((frame) => frame.includes("Help"));
+    expect(app.captureCharFrame()).toContain("ctrl+p");
+    expect(await fileExists("out.txt")).toBe(false);
+    app.renderer.destroy();
   });
 });

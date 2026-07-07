@@ -1,22 +1,24 @@
-import { Box, Text } from "ink";
+import { StatusFooter } from "./StatusFooter.tsx";
 
 interface Props {
   model: string;
   workspaceRoot: string;
   busy: boolean;
+  approvals?: number;
 }
 
-export function StatusBar({ model, workspaceRoot, busy }: Props) {
+export function StatusBar({ model, workspaceRoot, busy, approvals }: Props) {
+  if (approvals !== undefined) return <StatusFooter model={model} workspaceRoot={workspaceRoot} busy={busy} approvals={approvals} />;
   return (
-    <Box borderStyle="round" borderColor="gray" paddingX={1} justifyContent="space-between">
-      <Text bold color="cyan">
+    <box borderStyle="rounded" borderColor="gray" paddingX={1} justifyContent="space-between">
+      <text fg="cyan">
         cozycode
-      </Text>
-      <Text color="gray">
+      </text>
+      <text fg="gray">
         {model} · {shortenPath(workspaceRoot)}
-      </Text>
-      <Text color={busy ? "yellow" : "green"}>{busy ? "● working" : "○ ready"}</Text>
-    </Box>
+      </text>
+      <text fg={busy ? "yellow" : "green"}>{busy ? "● working" : "○ ready"}</text>
+    </box>
   );
 }
 

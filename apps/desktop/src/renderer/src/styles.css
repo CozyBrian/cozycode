@@ -40,7 +40,8 @@ body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: var(--text);
-  background: var(--bg);
+  /* Transparent so the macOS vibrancy layer shows through. */
+  background: transparent;
 }
 
 .app {
@@ -55,14 +56,22 @@ body {
   color: var(--muted);
 }
 
-/* Top bar */
+/* Top bar — unified macOS toolbar: transparent (vibrant), draggable, and
+   inset from the left so it clears the traffic lights. */
 .topbar {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 16px;
+  min-height: 48px;
+  padding: 8px 16px 8px 80px;
   border-bottom: 1px solid var(--border);
-  background: var(--bg-elev);
+  background: transparent;
+  -webkit-app-region: drag;
+}
+.topbar button,
+.topbar input,
+.topbar .actions {
+  -webkit-app-region: no-drag;
 }
 .topbar .brand {
   font-weight: 700;
@@ -188,7 +197,8 @@ body {
   display: flex;
   gap: 10px;
   align-items: flex-end;
-  background: var(--bg-elev);
+  /* Translucent so vibrancy shows through the input bar. */
+  background: color-mix(in srgb, var(--bg-elev) 72%, transparent);
 }
 .composer textarea {
   flex: 1;
