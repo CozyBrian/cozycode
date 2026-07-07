@@ -25,6 +25,13 @@ export type PermissionDecision = "allow" | "ask" | "deny";
 export interface PermissionPolicy {
   defaultDecision: PermissionDecision;
   tools: Record<string, PermissionDecision>;
+  /**
+   * Decision for shell commands classified as "destructive" (e.g. `rm`,
+   * `git reset`, `npm install`). Defaults to `"ask"`. When set to `"deny"`,
+   * destructive commands are blocked outright without prompting.
+   * Only applies when `run_shell` policy resolves to `"ask"`.
+   */
+  shellDestructiveDecision?: PermissionDecision;
 }
 
 /**

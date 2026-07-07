@@ -4,6 +4,7 @@ import type {
   PermissionDecision,
   PermissionPolicy,
 } from "@cozycode/protocol";
+import { classifyCommand } from "./tools/shell-safety.ts";
 
 export interface AuthorizeInput {
   toolCallId: string;
@@ -26,6 +27,13 @@ export interface AuthorizeResult {
  *   - `deny`  -> blocked, the model gets a denial result
  *   - `ask`   -> the frontend's `ApprovalHandler` decides; "allow-session"
  *                remembers the grant for the rest of the session.
+ *
+ * For `run_shell` with an `ask` policy, commands are classified:
+ *   - `safe`        -> auto-allowed without prompting
+ *   - `destructive` -> resolved via `shellDestructiveDecision` (default "ask")
+ *   - `unknown`     -> always deferred to the frontend ("ask")
+ *
+ * Explicit `allow`/`deny` policy always wins over classification.
  */
 export class PermissionGate {
   private readonly sessionGrants = new Set<string>();
@@ -46,7 +54,32 @@ export class PermissionGate {
     if (decision === "allow") return { allowed: true, decision };
     if (decision === "deny") return { allowed: false, decision };
 
-    // decision === "ask": defer to the frontend.
+    // decision === "ask": classify shell commands for auto-handling.
+    if (
+      input.toolName === "run_shell" &&
+      typeof input.args === "object" &&
+      input.args !== null
+    ) {
+      const command = (input.args as { command?: string }).command ?? "";
+      const classification = classifyCommand(command);
+
+      if (classification === "safe") {
+        return { allowed: true, decision: "allow" };
+      }
+
+      if (classification === "destructive") {
+        const destructiveDecision =
+          this.policy.shellDestructiveDecision ?? "ask";
+        if (destructiveDecision === "deny") {
+          return { allowed: false, decision: "deny" };
+        }
+        // Fall through to the approval handler (ask).
+      }
+
+      // classification === "unknown" — always ask. Fall through.
+    }
+
+    // Defer to the frontend.
     const outcome = await this.onApproval({
       requestId: randomUUID(),
       toolCallId: input.toolCallId,
