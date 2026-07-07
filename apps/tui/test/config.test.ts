@@ -1,0 +1,52 @@
+import { test, expect, describe, beforeEach, afterEach } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { resolveConfig } from "../src/config.ts";
+
+let root: string;
+beforeEach(async () => {
+  root = await mkdtemp(join(tmpdir(), "cozycode-cfg-"));
+});
+afterEach(async () => {
+  await rm(root, { recursive: true, force: true });
+});
+
+describe("resolveConfig", () => {
+  test("reads from environment variables", () => {
+    const r = resolveConfig([root], {
+      COZY_BASE_URL: "https://x/v1",
+      COZY_MODEL: "m1",
+      COZY_API_KEY: "k",
+    } as NodeJS.ProcessEnv);
+    expect(r.session.provider.baseURL).toBe("https://x/v1");
+    expect(r.session.model).toBe("m1");
+    expect(r.session.provider.apiKey).toBe("k");
+    expect(r.workspaceRoot).toBe(root);
+  });
+
+  test("falls back to a cozycode.json in the workspace", async () => {
+    await writeFile(
+      join(root, "cozycode.json"),
+      JSON.stringify({ baseURL: "https://file/v1", model: "file-model" }),
+    );
+    const r = resolveConfig([root], {} as NodeJS.ProcessEnv);
+    expect(r.session.provider.baseURL).toBe("https://file/v1");
+    expect(r.model).toBe("file-model");
+    expect(r.configSource).toContain("cozycode.json");
+  });
+
+  test("environment overrides the config file", async () => {
+    await writeFile(
+      join(root, "cozycode.json"),
+      JSON.stringify({ baseURL: "https://file/v1", model: "file-model" }),
+    );
+    const r = resolveConfig([root], { COZY_MODEL: "env-model" } as NodeJS.ProcessEnv);
+    expect(r.model).toBe("env-model");
+    expect(r.session.provider.baseURL).toBe("https://file/v1");
+  });
+
+  test("throws a helpful error when required fields are missing", () => {
+    expect(() => resolveConfig([root], {} as NodeJS.ProcessEnv)).toThrow(/Missing required config/);
+  });
+});

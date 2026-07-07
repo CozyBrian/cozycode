@@ -1,0 +1,27 @@
+{
+  "name": "@cozycode/tui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "cozycode": "./src/index.tsx"
+  },
+  "scripts": {
+    "start": "bun src/index.tsx",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@cozycode/core": "workspace:*",
+    "@cozycode/protocol": "workspace:*",
+    "@inkjs/ui": "^2.0.0",
+    "ink": "^6.0.0",
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@ai-sdk/provider": "^4.0.0",
+    "@types/node": "^26.0.0",
+    "@types/react": "^19.0.0",
+    "ai": "^7.0.16",
+    "ink-testing-library": "^4.0.0"
+  }
+}

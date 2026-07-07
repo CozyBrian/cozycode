@@ -13,6 +13,7 @@ packages/
   core/       @cozycode/core     — the engine: agent loop, tools, permissions, sessions
 apps/
   desktop/    @cozycode/desktop  — Electron app (core in main process, React renderer)
+  tui/        @cozycode/tui      — terminal UI (Ink), embeds the core directly
 ```
 
 The core is UI-agnostic: a `Session` emits a typed event stream and answers
@@ -63,3 +64,32 @@ bun run agent . "list the TypeScript files and summarize the core module"
 ```
 
 Approvals are answered interactively (`y` / `a` / `n`).
+
+## TUI
+
+An OpenCode-inspired full-screen terminal UI (Ink) that embeds the core directly
+— a scrollable transcript, tool cards, an inline approval prompt, and a status
+bar. Configure it the same way as the CLI harness (env vars or a `cozycode.json`
+in the workspace):
+
+```sh
+COZY_BASE_URL=https://api.openai.com/v1 \
+COZY_API_KEY=sk-... \
+COZY_MODEL=gpt-4o \
+bun run tui                 # run in the current directory
+bun run tui path/to/repo    # or point at a workspace
+```
+
+Keys: **Enter** to send · **Esc** to interrupt a running turn · **Ctrl+C** to
+quit. When a tool needs approval, choose **Allow once / Always allow / Deny**.
+
+## Testing
+
+```sh
+bun test            # 33 tests: core unit + core & TUI mock-model integration
+bun run typecheck   # all packages + both apps
+```
+
+The TUI's behavior is covered offline with `ink-testing-library` driving a mock
+model — the transcript render, an allowed tool call, and the interactive
+approval flow all run without a network endpoint.
