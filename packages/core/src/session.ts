@@ -29,7 +29,9 @@ export class Session {
 
   private readonly history: ModelMessage[] = [];
   private readonly gate: PermissionGate;
-  private readonly agent: ToolLoopAgent;
+  private readonly tools: ReturnType<typeof buildTools>;
+  private agent: ToolLoopAgent;
+  private currentModel: string;
   private abortController: AbortController | null = null;
   private stepCounter = 0;
 
@@ -39,19 +41,38 @@ export class Session {
     options: SessionOptions = {},
   ) {
     this.gate = new PermissionGate(config.permissions, approvalHandler);
-    // A pre-built model can be injected (tests, custom wrapping); otherwise we
-    // build one from the provider config.
-    const model = options.model ?? createModel(config.provider, config.model);
-    const tools = buildTools({
+    this.tools = buildTools({
       ctx: { workspaceRoot: config.workspaceRoot },
       gate: this.gate,
       emit: (e) => this.events.push(e),
     });
-    this.agent = new ToolLoopAgent({
+    this.currentModel = config.model;
+    // A pre-built model can be injected (tests, custom wrapping); otherwise we
+    // build one from the provider config.
+    this.agent = this.buildAgent(options.model ?? createModel(config.provider, config.model));
+  }
+
+  /** The model id currently in use. */
+  get model(): string {
+    return this.currentModel;
+  }
+
+  /**
+   * Switch the model mid-session, rebuilding the agent while preserving the
+   * message history so conversation context carries across the change.
+   */
+  setModel(model: string): void {
+    if (model === this.currentModel) return;
+    this.currentModel = model;
+    this.agent = this.buildAgent(createModel(this.config.provider, model));
+  }
+
+  private buildAgent(model: LanguageModel): ToolLoopAgent {
+    return new ToolLoopAgent({
       model,
-      instructions: config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
-      tools,
-      stopWhen: isStepCount(config.maxSteps ?? DEFAULT_MAX_STEPS),
+      instructions: this.config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+      tools: this.tools,
+      stopWhen: isStepCount(this.config.maxSteps ?? DEFAULT_MAX_STEPS),
     });
   }
 

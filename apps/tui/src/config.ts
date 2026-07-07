@@ -10,6 +10,8 @@ interface FileConfig {
   baseURL?: string;
   apiKey?: string;
   model?: string;
+  /** Optional explicit list of selectable models. */
+  models?: string[];
 }
 
 export interface ResolvedConfig {
@@ -65,6 +67,7 @@ export function resolveConfig(argv: string[], env: NodeJS.ProcessEnv): ResolvedC
     session: {
       provider: { name: providerName, baseURL: baseURL!, apiKey },
       model: model!,
+      models: Array.isArray(file.models) ? file.models : undefined,
       workspaceRoot,
       permissions: DEFAULT_PERMISSION_POLICY,
     },

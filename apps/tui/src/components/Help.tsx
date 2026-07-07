@@ -2,11 +2,15 @@ import { theme } from "../theme.ts";
 
 const KEYS = [
   ["enter", "send message"],
+  ["shift+enter", "newline (or ctrl+j)"],
   ["esc", "interrupt or close overlay"],
   ["ctrl+p", "command palette"],
+  ["ctrl+o", "switch model"],
+  ["ctrl+b", "toggle sidebar"],
   ["pgup/pgdn", "scroll transcript"],
   ["home/end", "jump transcript"],
   ["/new /clear", "reset chat"],
+  ["/model", "switch model"],
   ["/help", "show this help"],
   ["/quit", "quit"],
 ] as const;

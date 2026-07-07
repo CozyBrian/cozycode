@@ -109,6 +109,11 @@ export interface SessionConfig {
   provider: ProviderConfig;
   /** Model id understood by the provider, e.g. "gpt-4o", "llama3.1". */
   model: string;
+  /**
+   * Optional explicit list of selectable model ids. When omitted, frontends
+   * may discover models from the provider (e.g. its `/models` endpoint).
+   */
+  models?: string[];
   /** Absolute path the agent's tools are rooted at (its workspace). */
   workspaceRoot: string;
   /** Optional system prompt override. */

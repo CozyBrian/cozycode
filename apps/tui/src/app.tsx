@@ -18,10 +18,15 @@ import { ApprovalPrompt } from "./components/ApprovalPrompt.tsx";
 import { CommandPalette, type Command } from "./components/CommandPalette.tsx";
 import { Help } from "./components/Help.tsx";
 import { Logo } from "./components/Logo.tsx";
+import { ModelDialog } from "./components/ModelDialog.tsx";
 import { Prompt } from "./components/Prompt.tsx";
+import { Sidebar } from "./components/Sidebar.tsx";
 import { StatusFooter } from "./components/StatusFooter.tsx";
 import { Viewport } from "./components/Viewport.tsx";
 import { theme } from "./theme.ts";
+
+/** Terminals at least this wide auto-show the sidebar inline. */
+const WIDE_COLS = 120;
 
 export interface AppProps {
   config: SessionConfig;
@@ -32,21 +37,27 @@ export interface AppProps {
   onExit?: () => void;
 }
 
-export function App({ config, model, workspaceRoot, sessionOptions, onExit }: AppProps) {
+type Overlay = "commands" | "help" | "model" | null;
+
+export function App({ config, model: initialModel, workspaceRoot, sessionOptions, onExit }: AppProps) {
   const dimensions = useTerminalDimensions();
   const [history, setHistory] = useState<RenderItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   const [usage, setUsage] = useState<TokenUsage | undefined>();
-  const [overlay, setOverlay] = useState<"commands" | "help" | null>(null);
+  const [overlay, setOverlay] = useState<Overlay>(null);
   const [inputKey, setInputKey] = useState(0);
+  const [model, setModel] = useState(initialModel);
+  const [sidebarOverride, setSidebarOverride] = useState<boolean | null>(null);
 
   // The active turn's items live in a ref (mutated as events stream in); `bump`
-  // forces a re-render so the streaming tail stays live below the <Static> log.
+  // forces a re-render so the streaming tail stays live below the log.
   const turnRef = useRef<RenderItem[]>([]);
   const [, bump] = useReducer((x: number) => x + 1, 0);
   const sessionRef = useRef<Session | null>(null);
   const approvalResolver = useRef<((o: ApprovalOutcome) => void) | null>(null);
+  // Tracks the live model so a fresh session (after /new) keeps the selection.
+  const modelRef = useRef(initialModel);
 
   const startSession = () => {
     const handler: ApprovalHandler = (req) =>
@@ -55,6 +66,7 @@ export function App({ config, model, workspaceRoot, sessionOptions, onExit }: Ap
         setApproval(req);
       });
     const session = createSession(config, handler, sessionOptions);
+    if (modelRef.current !== config.model) session.setModel(modelRef.current);
     sessionRef.current = session;
 
     const flush = () => {
@@ -95,10 +107,25 @@ export function App({ config, model, workspaceRoot, sessionOptions, onExit }: Ap
     if (!onExit) process.exit(0);
   };
 
+  const wide = (dimensions.width || 0) >= WIDE_COLS;
+  const sidebarVisible = sidebarOverride ?? wide;
+  const sidebarOverlay = sidebarVisible && !wide;
+
   useKeyboard((key) => {
-    if (key.ctrl && key.name === "c") exit();
+    if (key.ctrl && key.name === "c") return exit();
     if (key.ctrl && key.name === "p") {
       setOverlay((current) => (current === "commands" ? null : "commands"));
+      return;
+    }
+    // ctrl+o opens the model picker. (ctrl+m is avoided: in legacy terminals
+    // it is indistinguishable from Enter, and the textarea already binds the
+    // emacs-style ctrl+a/e/f/b/w/d/k/u keys.)
+    if (key.ctrl && key.name === "o") {
+      setOverlay((current) => (current === "model" ? null : "model"));
+      return;
+    }
+    if (key.ctrl && key.name === "b") {
+      setSidebarOverride((current) => !(current ?? wide));
       return;
     }
     if (key.name === "escape" && overlay) {
@@ -122,12 +149,22 @@ export function App({ config, model, workspaceRoot, sessionOptions, onExit }: Ap
     startSession();
   };
 
+  const switchModel = (next: string) => {
+    modelRef.current = next;
+    sessionRef.current?.setModel(next);
+    setModel(next);
+    setOverlay(null);
+  };
+
   const dispatchCommand = (command: Command) => {
     setOverlay(null);
     switch (command) {
       case "new":
       case "clear":
         resetChat();
+        break;
+      case "model":
+        setOverlay("model");
         break;
       case "help":
         setOverlay("help");
@@ -146,6 +183,10 @@ export function App({ config, model, workspaceRoot, sessionOptions, onExit }: Ap
         case "/new":
         case "/clear":
           resetChat();
+          break;
+        case "/model":
+        case "/models":
+          setOverlay("model");
           break;
         case "/help":
           setOverlay("help");
@@ -174,31 +215,42 @@ export function App({ config, model, workspaceRoot, sessionOptions, onExit }: Ap
 
   const items = [...history, ...turnRef.current];
   const rows = dimensions.height || 0;
-  const footerHeight = approval ? 6 : 5;
-  const overlayHeight = overlay ? 9 : 0;
-  const viewportHeight = rows ? Math.max(1, rows - footerHeight - overlayHeight) : undefined;
   const showHome = items.length === 0 && !busy && !approval && !overlay;
 
   return (
     <box flexDirection="column" height={rows || undefined} backgroundColor={theme.bg}>
-      <box flexGrow={rows ? 1 : undefined} flexDirection="column" overflow={rows ? "hidden" : undefined}>
-        {showHome ? (
-          <box flexGrow={rows ? 1 : undefined} flexDirection="column" alignItems="center" justifyContent={rows ? "center" : undefined}>
-            <Logo />
-            <box marginTop={2}>
-              <text fg={theme.text}>Ask anything…</text>
+      <box flexDirection="row" flexGrow={rows ? 1 : undefined}>
+        <box flexGrow={1} flexDirection="column" overflow={rows ? "hidden" : undefined}>
+          {showHome ? (
+            <box flexGrow={rows ? 1 : undefined} flexDirection="column" alignItems="center" justifyContent={rows ? "center" : undefined}>
+              <Logo />
+              <box marginTop={2}>
+                <text fg={theme.text}>Ask anything…</text>
+              </box>
+              <text fg={theme.muted}>Tip: ctrl+p commands · ctrl+o model · /help keybindings</text>
             </box>
-            <text fg={theme.muted}>Tip: ctrl+p commands · /help keybindings</text>
+          ) : (
+            <Viewport items={items} inputEnabled={!overlay} />
+          )}
+          {overlay === "commands" ? <CommandPalette onSelect={dispatchCommand} /> : null}
+          {overlay === "help" ? <Help /> : null}
+          {overlay === "model" ? (
+            <ModelDialog
+              provider={config.provider}
+              current={model}
+              configured={config.models}
+              onSelect={switchModel}
+              onCancel={() => setOverlay(null)}
+            />
+          ) : null}
+          <box flexShrink={0} flexDirection="column" marginTop={1}>
+            {approval ? <ApprovalPrompt request={approval} onRespond={respond} /> : <Prompt busy={busy} inputKey={inputKey} model={model} workspaceRoot={workspaceRoot} usage={usage} onSubmit={submit} />}
+            <StatusFooter model={model} workspaceRoot={workspaceRoot} busy={busy} approvals={approval ? 1 : 0} />
           </box>
-        ) : (
-          <Viewport items={items} height={viewportHeight} inputEnabled={!overlay} />
-        )}
-        {overlay === "commands" ? <CommandPalette onSelect={dispatchCommand} /> : null}
-        {overlay === "help" ? <Help /> : null}
-      </box>
-      <box flexShrink={0} flexDirection="column" marginTop={1}>
-        {approval ? <ApprovalPrompt request={approval} onRespond={respond} /> : <Prompt busy={busy} inputKey={inputKey} model={model} workspaceRoot={workspaceRoot} usage={usage} onSubmit={submit} />}
-        <StatusFooter model={model} workspaceRoot={workspaceRoot} busy={busy} approvals={approval ? 1 : 0} />
+        </box>
+        {sidebarVisible ? (
+          <Sidebar model={model} workspaceRoot={workspaceRoot} usage={usage} items={items} overlay={sidebarOverlay} />
+        ) : null}
       </box>
     </box>
   );

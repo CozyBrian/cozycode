@@ -153,6 +153,45 @@ describe("TUI App (integration, mock model)", () => {
     app.renderer.destroy();
   });
 
+  test("auto-shows the sidebar on wide terminals", async () => {
+    const app = await renderApp({ defaultDecision: "allow", tools: {} }, "x");
+    app.resize(130, 30);
+    await app.flush();
+    const frame = app.captureCharFrame();
+    expect(frame).toContain("Workspace");
+    expect(frame).toContain("Usage");
+    expect(frame).toContain("Tools");
+    app.renderer.destroy();
+  });
+
+  test("toggles the sidebar with ctrl+b on narrow terminals", async () => {
+    const app = await renderApp({ defaultDecision: "allow", tools: {} }, "x");
+    await app.flush();
+    // Default width 100 (< 120) hides the sidebar.
+    expect(app.captureCharFrame()).not.toContain("Workspace");
+    app.mockInput.pressKey("b", { ctrl: true });
+    await app.flush();
+    expect(app.captureCharFrame()).toContain("Workspace");
+    app.renderer.destroy();
+  });
+
+  test("opens the model selector with ctrl+o and closes on escape", async () => {
+    const app = await renderApp({ defaultDecision: "allow", tools: {} }, "x");
+    await app.flush();
+    app.mockInput.pressKey("o", { ctrl: true });
+    await waitFor(async () => {
+      await app.flush();
+      return app.captureCharFrame().includes("Switch model");
+    });
+    expect(app.captureCharFrame()).toContain("mock-model");
+    app.mockInput.pressEscape();
+    await waitFor(async () => {
+      await app.flush();
+      return !app.captureCharFrame().includes("Switch model");
+    });
+    app.renderer.destroy();
+  });
+
   test("handles help slash command without sending a model message", async () => {
     const app = await renderApp(
       { defaultDecision: "allow", tools: {} },
