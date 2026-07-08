@@ -263,4 +263,33 @@ describe("TUI App (integration, mock model)", () => {
     await app.waitForFrame((frame) => frame.includes("PLAN"));
     expect(app.captureCharFrame()).toContain("PLAN");
     app.renderer.destroy();
+  });
+
+  test("typing a slash prefix shows command autocomplete suggestions", async () => {
+    const app = await renderApp(
+      { defaultDecision: "allow", tools: { write_file: "allow" } },
+      "x",
+    );
+
+    await app.flush();
+    // Partial command name, not submitted: suggestions should surface.
+    await app.mockInput.typeText("/mo");
+    await app.waitForFrame((frame) => frame.includes("/model"));
+    expect(app.captureCharFrame()).toContain("/model");
+    app.renderer.destroy();
+  });
+
+  test("an unknown slash command reports an error and does not hit the model", async () => {
+    const app = await renderApp(
+      { defaultDecision: "allow", tools: { write_file: "allow" } },
+      "should not be written",
+    );
+
+    await app.flush();
+    await app.mockInput.typeText("/bogus");
+    app.mockInput.pressEnter();
+
+    await app.waitForFrame((frame) => frame.includes("Unknown command: /bogus"));
+    expect(await fileExists("out.txt")).toBe(false);
+    app.renderer.destroy();
   });});

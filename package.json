@@ -10,7 +10,7 @@
     "dev": "bun run --cwd apps/desktop dev",
     "build": "bun run --cwd apps/desktop build",
     "tui": "bun apps/tui/src/index.tsx",
-    "typecheck": "tsc -p packages/protocol/tsconfig.json && tsc -p packages/core/tsconfig.json && tsc -p apps/desktop/tsconfig.json && tsc -p apps/tui/tsconfig.json",
+    "typecheck": "tsc -p packages/protocol/tsconfig.json && tsc -p packages/commands/tsconfig.json && tsc -p packages/core/tsconfig.json && tsc -p apps/desktop/tsconfig.json && tsc -p apps/tui/tsconfig.json",
     "test": "bun test",
     "agent": "bun packages/core/scripts/agent-run.ts"
   },

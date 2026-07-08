@@ -1,6 +1,12 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { createSession, type Session, type SessionOptions } from "@cozycode/core";
+import {
+  findCommand,
+  parseCommandInput,
+  runCommandInput,
+  type CommandContext,
+} from "@cozycode/commands";
 import type {
   AgentMode,
   ApprovalHandler,
@@ -16,7 +22,7 @@ import {
   type RenderItem,
 } from "./transcript.ts";
 import { ApprovalPrompt } from "./components/ApprovalPrompt.tsx";
-import { CommandPalette, type Command } from "./components/CommandPalette.tsx";
+import { CommandPalette } from "./components/CommandPalette.tsx";
 import { Help } from "./components/Help.tsx";
 import { Logo } from "./components/Logo.tsx";
 import { ModelDialog } from "./components/ModelDialog.tsx";
@@ -178,67 +184,40 @@ export function App({ config, model: initialModel, workspaceRoot, sessionOptions
     sessionRef.current?.setMode(next);
   };
 
-  const dispatchCommand = (command: Command) => {
+  // Capabilities the command registry drives. The registry owns *which* command
+  // maps to what; this object only supplies the TUI's effects.
+  const commandCtx: CommandContext = {
+    setMode: switchMode,
+    setModel: switchModel,
+    newSession: resetChat,
+    openModelPicker: () => setOverlay("model"),
+    showHelp: () => setOverlay("help"),
+    exit,
+    send: (text) => {
+      setHistory((h) => [...h, userItem(text)]);
+      setBusy(true);
+      void sessionRef.current?.send(text);
+    },
+    notify: (_kind, text) =>
+      setHistory((h) => [...h, { id: `command:${Date.now()}`, kind: "error", text }]),
+  };
+
+  // Run a command selected from the palette (by canonical name, no args).
+  const dispatchCommand = (name: string) => {
     setOverlay(null);
-    switch (command) {
-      case "new":
-      case "clear":
-        resetChat();
-        break;
-      case "model":
-        setOverlay("model");
-        break;
-      case "plan":
-        switchMode("plan");
-        break;
-      case "build":
-        switchMode("build");
-        break;
-      case "help":
-        setOverlay("help");
-        break;
-      case "quit":
-        exit();
-        break;
-    }
+    void findCommand(name)?.run(commandCtx, "");
   };
 
   const submit = (value: string) => {
     const text = value.trim();
     if (!text || busy) return;
-    if (text.startsWith("/")) {
-      switch (text) {
-        case "/new":
-        case "/clear":
-          resetChat();
-          break;
-        case "/model":
-        case "/models":
-          setOverlay("model");
-          break;
-        case "/plan":
-          switchMode("plan");
-          break;
-        case "/build":
-          switchMode("build");
-          break;
-        case "/help":
-          setOverlay("help");
-          break;
-        case "/quit":
-        case "/exit":
-          exit();
-          break;
-        default:
-          setHistory((h) => [...h, { id: `unknown-command:${Date.now()}`, kind: "error", text: `Unknown command: ${text}` }]);
-      }
+    if (parseCommandInput(text)) {
+      void runCommandInput(commandCtx, text);
       setInputKey((k) => k + 1);
       return;
     }
-    setHistory((h) => [...h, userItem(text)]);
+    commandCtx.send(text);
     setInputKey((k) => k + 1);
-    setBusy(true);
-    void sessionRef.current?.send(text);
   };
 
   const respond = (outcome: ApprovalOutcome) => {

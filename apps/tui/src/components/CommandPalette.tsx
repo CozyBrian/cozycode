@@ -1,19 +1,16 @@
 import type { SelectOption } from "@opentui/core";
+import { listCommands } from "@cozycode/commands";
 import { theme } from "../theme.ts";
 
-export type Command = "new" | "clear" | "model" | "help" | "quit" | "plan" | "build";
+// Options are derived from the shared command registry, so the palette never
+// drifts from the parser or help. `value` is the canonical command name.
+const OPTIONS: SelectOption[] = listCommands().map((command) => ({
+  name: command.title ?? command.name,
+  description: command.description,
+  value: command.name,
+}));
 
-const OPTIONS: SelectOption[] = [
-  { name: "New chat", description: "Start a fresh session", value: "new" satisfies Command },
-  { name: "Clear", description: "Clear the transcript", value: "clear" satisfies Command },
-  { name: "Switch model", description: "Choose a different model", value: "model" satisfies Command },
-  { name: "Plan mode", description: "Read-only research; no edits", value: "plan" satisfies Command },
-  { name: "Build mode", description: "Execute changes (default)", value: "build" satisfies Command },
-  { name: "Help", description: "Show keybindings", value: "help" satisfies Command },
-  { name: "Quit", description: "Exit cozycode", value: "quit" satisfies Command },
-];
-
-export function CommandPalette({ onSelect }: { onSelect: (command: Command) => void }) {
+export function CommandPalette({ onSelect }: { onSelect: (name: string) => void }) {
   return (
     <box justifyContent="center" marginY={1}>
       <box flexDirection="column" width={42} height={12} borderStyle="rounded" borderColor={theme.borderActive} backgroundColor={theme.panel} paddingX={2} paddingY={1}>
@@ -26,7 +23,7 @@ export function CommandPalette({ onSelect }: { onSelect: (command: Command) => v
             selectedTextColor={theme.bg}
             selectedBackgroundColor={theme.primary}
             descriptionColor={theme.muted}
-            onSelect={(_index, option) => option?.value && onSelect(option.value as Command)}
+            onSelect={(_index, option) => option?.value && onSelect(option.value as string)}
           />
         </box>
       </box>

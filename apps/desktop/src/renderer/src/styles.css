@@ -218,6 +218,7 @@ body {
 
 /* Composer */
 .composer {
+  position: relative;
   border-top: 1px solid var(--border);
   padding: 12px 16px;
   display: flex;
@@ -225,6 +226,54 @@ body {
   align-items: flex-end;
   /* Translucent so vibrancy shows through the input bar. */
   background: color-mix(in srgb, var(--bg-elev) 72%, transparent);
+}
+
+/* Slash-command autocomplete, floated above the input bar. */
+.command-suggestions {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: calc(100% - 6px);
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  max-height: 240px;
+  overflow-y: auto;
+  z-index: 20;
+}
+.command-suggestions li {
+  margin: 0;
+}
+.command-suggestions button {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+.command-suggestions button:hover,
+.command-suggestions button.selected {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+.command-suggestions .name {
+  min-width: 88px;
+  font-weight: 600;
+}
+.command-suggestions .desc {
+  color: var(--muted);
+}
+.command-suggestions button:hover .desc,
+.command-suggestions button.selected .desc {
+  color: var(--accent-text);
 }
 .composer textarea {
   flex: 1;
