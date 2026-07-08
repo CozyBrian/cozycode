@@ -1,4 +1,5 @@
 import type {
+  AgentMode,
   ApprovalOutcome,
   ApprovalRequest,
   PermissionPolicy,
@@ -30,6 +31,7 @@ export const IPC = {
   sessionSend: "session:send",
   sessionAbort: "session:abort",
   sessionReset: "session:reset",
+  sessionSetMode: "session:set-mode",
   approvalRespond: "approval:respond",
   // main -> renderer (push)
   sessionEvent: "session:event",
@@ -44,6 +46,7 @@ export interface CozyApi {
   send(message: string): Promise<{ ok: boolean; error?: string }>;
   abort(): Promise<void>;
   reset(): Promise<void>;
+  setMode(mode: AgentMode): Promise<void>;
   respondApproval(requestId: string, outcome: ApprovalOutcome): Promise<void>;
   onEvent(cb: (event: SessionEvent) => void): () => void;
   onApprovalRequest(cb: (request: ApprovalRequest) => void): () => void;

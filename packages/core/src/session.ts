@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import { ToolLoopAgent, isStepCount, type LanguageModel, type ModelMessage } from "ai";
 import type {
+  AgentMode,
   ApprovalHandler,
   SessionConfig,
   SessionEvent,
@@ -10,7 +13,12 @@ import { createModel } from "./model.ts";
 import { PermissionGate } from "./permissions.ts";
 import { buildTools } from "./tools/index.ts";
 import { AsyncEventQueue } from "./events.ts";
-import { DEFAULT_MAX_STEPS, DEFAULT_SYSTEM_PROMPT } from "./config.ts";
+import {
+  DEFAULT_MAX_STEPS,
+  DEFAULT_SYSTEM_PROMPT,
+  PLAN_MODE_PROMPT_ADDENDUM,
+  PLAN_FILE_DIR,
+} from "./config.ts";
 
 export interface SessionOptions {
   /** Inject a pre-built language model, bypassing provider-config construction. */
@@ -32,15 +40,22 @@ export class Session {
   private readonly tools: ReturnType<typeof buildTools>;
   private agent: ToolLoopAgent;
   private currentModel: string;
+  private currentMode: AgentMode;
   private abortController: AbortController | null = null;
   private stepCounter = 0;
+  private planFilePath: string | null = null;
+  // The model used to build the current agent, retained so a mode change can
+  // rebuild with the same model rather than reconstructing the provider model.
+  private activeModel: LanguageModel;
 
   constructor(
     private readonly config: SessionConfig,
     approvalHandler: ApprovalHandler,
     options: SessionOptions = {},
   ) {
-    this.gate = new PermissionGate(config.permissions, approvalHandler);
+    const initialMode = config.mode ?? "build";
+    this.currentMode = initialMode;
+    this.gate = new PermissionGate(config.permissions, approvalHandler, initialMode);
     this.tools = buildTools({
       ctx: { workspaceRoot: config.workspaceRoot },
       gate: this.gate,
@@ -49,12 +64,32 @@ export class Session {
     this.currentModel = config.model;
     // A pre-built model can be injected (tests, custom wrapping); otherwise we
     // build one from the provider config.
-    this.agent = this.buildAgent(options.model ?? createModel(config.provider, config.model));
+    this.activeModel = options.model ?? createModel(config.provider, config.model);
+    this.agent = this.buildAgent(this.activeModel);
+
+    if (initialMode === "plan") {
+      this.planFilePath = this.computePlanPath();
+      this.gate.setPlanFile(this.planFilePath);
+    }
+  }
+
+  /** The workspace-relative path to the plan markdown file, if plan mode has been entered. */
+  get planFile(): string | null {
+    return this.planFilePath;
+  }
+
+  private computePlanPath(): string {
+    return join(PLAN_FILE_DIR, `${this.id}.md`);
   }
 
   /** The model id currently in use. */
   get model(): string {
     return this.currentModel;
+  }
+
+  /** The agent mode currently in effect. */
+  get mode(): AgentMode {
+    return this.currentMode;
   }
 
   /**
@@ -64,13 +99,55 @@ export class Session {
   setModel(model: string): void {
     if (model === this.currentModel) return;
     this.currentModel = model;
-    this.agent = this.buildAgent(createModel(this.config.provider, model));
+    this.activeModel = createModel(this.config.provider, model);
+    this.agent = this.buildAgent(this.activeModel);
+  }
+
+  /**
+   * Switch the agent mode mid-session. Rebuilds the agent with a mode-appropriate
+   * system prompt and arms the permission gate's read-only enforcement. Emits a
+   * `mode-change` event so frontends can render a transition marker.
+   *
+   * Entering plan mode also ensures the plan file directory exists and registers
+   * the plan file path on the gate so the agent can write to it.
+   */
+  setMode(mode: AgentMode): void {
+    if (mode === this.currentMode) return;
+    this.currentMode = mode;
+    this.gate.setMode(mode);
+    if (mode === "plan") {
+      this.planFilePath = this.computePlanPath();
+      this.gate.setPlanFile(this.planFilePath);
+      void mkdir(join(this.config.workspaceRoot, PLAN_FILE_DIR), {
+        recursive: true,
+      }).catch(() => {});
+    }
+    this.agent = this.buildAgent(this.activeModel);
+    this.events.push({ type: "mode-change", mode });
   }
 
   private buildAgent(model: LanguageModel): ToolLoopAgent {
+    let instructions: string;
+    if (this.currentMode === "plan") {
+      const planInfo = this.planFilePath
+        ? `Write your implementation plan to ${this.planFilePath}.`
+        : `No plan file path is set.`;
+      instructions = `${this.config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT} ${PLAN_MODE_PROMPT_ADDENDUM} ${planInfo}`;
+    } else if (this.planFilePath) {
+      instructions = [
+        "You are now in build mode — execute the implementation plan.",
+        `Read the plan file at ${this.planFilePath} and follow it step by step.`,
+        "Work in small, verifiable steps. Prefer reading a file before editing it.",
+        "When you edit code, make targeted changes and explain what you did.",
+        "If you encounter any deviation from the plan, update the plan file to reflect",
+        "the actual implementation so the plan stays accurate.",
+      ].join(" ");
+    } else {
+      instructions = this.config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+    }
     return new ToolLoopAgent({
       model,
-      instructions: this.config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+      instructions,
       tools: this.tools,
       stopWhen: isStepCount(this.config.maxSteps ?? DEFAULT_MAX_STEPS),
     });

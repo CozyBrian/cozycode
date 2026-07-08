@@ -129,8 +129,34 @@ body {
   border: 1px solid var(--error);
   align-self: flex-start;
 }
-.cursor {
-  animation: blink 1s steps(2, start) infinite;
+.msg.system {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: italic;
+  text-align: center;
+  align-self: center;
+  padding: 4px 0;
+  background: transparent;
+}
+.topbar .meta .mode-pill {
+  padding: 2px 10px;
+  margin-right: 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--muted);
+  cursor: pointer;
+}
+.topbar .meta .mode-pill.plan {
+  color: var(--tool-run);
+  border-color: var(--tool-run);
+}
+.topbar .meta .mode-pill.build {
+  color: var(--tool-done);
+  border-color: var(--tool-done);
 }
 @keyframes blink {
   to {

@@ -5,6 +5,7 @@ import {
   type Session,
 } from "@cozycode/core";
 import type {
+  AgentMode,
   ApprovalOutcome,
   ApprovalRequest,
   SessionConfig,
@@ -20,6 +21,7 @@ import type { SettingsStore } from "./settings.ts";
 export class SessionManager {
   private session: Session | null = null;
   private configKey = "";
+  private currentMode: AgentMode = "build";
   private readonly pendingApprovals = new Map<string, (o: ApprovalOutcome) => void>();
 
   constructor(
@@ -52,9 +54,23 @@ export class SessionManager {
 
     this.session?.close();
     this.configKey = key;
+    // Carry the live mode across a settings-triggered rebuild so switching
+    // providers/models mid-plan doesn't drop the user out of plan mode.
+    if (this.currentMode !== "build") config.mode = this.currentMode;
     this.session = createSession(config, (req) => this.requestApproval(req));
     this.pump(this.session);
     return this.session;
+  }
+
+  /** Switch the agent mode (plan ↔ build) on the live session, if any. */
+  setMode(mode: AgentMode): void {
+    this.currentMode = mode;
+    this.session?.setMode(mode);
+  }
+
+  /** The mode currently in effect (or the pending one if no session yet). */
+  getMode(): AgentMode {
+    return this.session?.mode ?? this.currentMode;
   }
 
   /** Forward session events to the renderer until the queue closes. */
@@ -99,6 +115,8 @@ export class SessionManager {
     this.session?.close();
     this.session = null;
     this.configKey = "";
+    // A fresh session resets to build mode.
+    this.currentMode = "build";
     // Reject nothing — deny any dangling approvals so the old turn unblocks.
     for (const [id, resolve] of this.pendingApprovals) {
       resolve("deny");

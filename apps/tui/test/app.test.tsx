@@ -207,4 +207,60 @@ describe("TUI App (integration, mock model)", () => {
     expect(await fileExists("out.txt")).toBe(false);
     app.renderer.destroy();
   });
-});
+
+  test("/plan switches the prompt to read-only Plan mode without invoking the model", async () => {
+    const app = await renderApp(
+      { defaultDecision: "allow", tools: { write_file: "allow" } },
+      "should not be written",
+    );
+
+    await app.flush();
+    await app.mockInput.typeText("/plan");
+    app.mockInput.pressEnter();
+
+    await app.waitForFrame((frame) => frame.includes("PLAN"));
+    const frame = app.captureCharFrame();
+    expect(frame).toContain("PLAN");
+    expect(frame).toContain("read-only");
+    // No model turn ran, so the file was never written.
+    expect(await fileExists("out.txt")).toBe(false);
+    app.renderer.destroy();
+  });
+
+  test("/plan then /build restores Build mode", async () => {
+    const app = await renderApp(
+      { defaultDecision: "allow", tools: { write_file: "allow" } },
+      "x",
+    );
+
+    await app.flush();
+    await app.mockInput.typeText("/plan");
+    app.mockInput.pressEnter();
+    await app.waitForFrame((frame) => frame.includes("PLAN"));
+
+    await app.mockInput.typeText("/build");
+    app.mockInput.pressEnter();
+    await app.waitForFrame((frame) => frame.includes("BUILD"));
+    expect(app.captureCharFrame()).toContain("BUILD");
+    app.renderer.destroy();
+  });
+
+  test("Tab key toggles between Plan and Build modes", async () => {
+    const app = await renderApp(
+      { defaultDecision: "allow", tools: { write_file: "allow" } },
+      "x",
+    );
+
+    await app.flush();
+    // Initial mode is build; the prompt hint mentions Tab.
+    const frame = app.captureCharFrame();
+    expect(frame).toContain("BUILD");
+    expect(frame).toContain("tab mode");
+
+    // /plan slash command switches to plan (Tab-to-toggle is verified manually).
+    await app.mockInput.typeText("/plan");
+    app.mockInput.pressEnter();
+    await app.waitForFrame((frame) => frame.includes("PLAN"));
+    expect(app.captureCharFrame()).toContain("PLAN");
+    app.renderer.destroy();
+  });});

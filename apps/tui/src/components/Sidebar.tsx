@@ -1,9 +1,10 @@
-import type { TokenUsage } from "@cozycode/protocol";
+import type { AgentMode, TokenUsage } from "@cozycode/protocol";
 import type { RenderItem } from "../transcript.ts";
 import { shortPath, theme } from "../theme.ts";
 
 interface Props {
   model: string;
+  mode: AgentMode;
   workspaceRoot: string;
   usage?: TokenUsage;
   items: RenderItem[];
@@ -19,7 +20,7 @@ const FILE_TOOLS = new Set(["read_file", "write_file", "edit_file"]);
  * model, workspace, token usage, and per-session tool/file activity — all
  * derived from the transcript, so it needs no extra state.
  */
-export function Sidebar({ model, workspaceRoot, usage, items, overlay }: Props) {
+export function Sidebar({ model, mode, workspaceRoot, usage, items, overlay }: Props) {
   const tools = toolCounts(items);
   const files = filesTouched(items);
 
@@ -40,6 +41,13 @@ export function Sidebar({ model, workspaceRoot, usage, items, overlay }: Props) 
       top={overlay ? 0 : undefined}
       zIndex={overlay ? 50 : undefined}
     >
+      <Section title="Mode">
+        {mode === "plan" ? (
+          <text fg={theme.accent}>PLAN (read-only)</text>
+        ) : (
+          <text fg={theme.success}>BUILD</text>
+        )}
+      </Section>
       <Section title="Model">
         <text fg={theme.text}>{model}</text>
       </Section>

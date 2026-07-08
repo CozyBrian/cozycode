@@ -2,6 +2,7 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { createSession, type Session, type SessionOptions } from "@cozycode/core";
 import type {
+  AgentMode,
   ApprovalHandler,
   ApprovalOutcome,
   ApprovalRequest,
@@ -49,6 +50,7 @@ export function App({ config, model: initialModel, workspaceRoot, sessionOptions
   const [inputKey, setInputKey] = useState(0);
   const [model, setModel] = useState(initialModel);
   const [sidebarOverride, setSidebarOverride] = useState<boolean | null>(null);
+  const [mode, setMode] = useState<AgentMode>(config.mode ?? "build");
 
   // The active turn's items live in a ref (mutated as events stream in); `bump`
   // forces a re-render so the streaming tail stays live below the log.
@@ -58,6 +60,8 @@ export function App({ config, model: initialModel, workspaceRoot, sessionOptions
   const approvalResolver = useRef<((o: ApprovalOutcome) => void) | null>(null);
   // Tracks the live model so a fresh session (after /new) keeps the selection.
   const modelRef = useRef(initialModel);
+  // Tracks the live mode so a fresh session (after /new) keeps the selection.
+  const modeRef = useRef<AgentMode>(config.mode ?? "build");
 
   const startSession = () => {
     const handler: ApprovalHandler = (req) =>
@@ -67,6 +71,7 @@ export function App({ config, model: initialModel, workspaceRoot, sessionOptions
       });
     const session = createSession(config, handler, sessionOptions);
     if (modelRef.current !== config.model) session.setModel(modelRef.current);
+    if (modeRef.current !== (config.mode ?? "build")) session.setMode(modeRef.current);
     sessionRef.current = session;
 
     const flush = () => {
@@ -77,7 +82,10 @@ export function App({ config, model: initialModel, workspaceRoot, sessionOptions
 
     void (async () => {
       for await (const event of session.events) {
-        if (event.type === "finish") {
+        if (event.type === "mode-change") {
+          modeRef.current = event.mode;
+          setMode(event.mode);
+        } else if (event.type === "finish") {
           setUsage(event.usage);
           flush();
           setBusy(false);
@@ -156,6 +164,20 @@ export function App({ config, model: initialModel, workspaceRoot, sessionOptions
     setOverlay(null);
   };
 
+  const switchMode = (next: AgentMode) => {
+    if (next === modeRef.current) {
+      setOverlay(null);
+      return;
+    }
+    sessionRef.current?.setMode(next);
+    setOverlay(null);
+  };
+
+  const toggleMode = () => {
+    const next: AgentMode = modeRef.current === "plan" ? "build" : "plan";
+    sessionRef.current?.setMode(next);
+  };
+
   const dispatchCommand = (command: Command) => {
     setOverlay(null);
     switch (command) {
@@ -165,6 +187,12 @@ export function App({ config, model: initialModel, workspaceRoot, sessionOptions
         break;
       case "model":
         setOverlay("model");
+        break;
+      case "plan":
+        switchMode("plan");
+        break;
+      case "build":
+        switchMode("build");
         break;
       case "help":
         setOverlay("help");
@@ -187,6 +215,12 @@ export function App({ config, model: initialModel, workspaceRoot, sessionOptions
         case "/model":
         case "/models":
           setOverlay("model");
+          break;
+        case "/plan":
+          switchMode("plan");
+          break;
+        case "/build":
+          switchMode("build");
           break;
         case "/help":
           setOverlay("help");
@@ -227,7 +261,7 @@ export function App({ config, model: initialModel, workspaceRoot, sessionOptions
               <box marginTop={2}>
                 <text fg={theme.text}>Ask anything…</text>
               </box>
-              <text fg={theme.muted}>Tip: ctrl+p commands · ctrl+o model · /help keybindings</text>
+              <text fg={theme.muted}>Tip: ctrl+p commands · ctrl+o model · tab mode · /help keybindings</text>
             </box>
           ) : (
             <Viewport items={items} inputEnabled={!overlay} />
@@ -244,12 +278,12 @@ export function App({ config, model: initialModel, workspaceRoot, sessionOptions
             />
           ) : null}
           <box flexShrink={0} flexDirection="column" marginTop={1}>
-            {approval ? <ApprovalPrompt request={approval} onRespond={respond} /> : <Prompt busy={busy} inputKey={inputKey} model={model} workspaceRoot={workspaceRoot} usage={usage} onSubmit={submit} />}
-            <StatusFooter model={model} workspaceRoot={workspaceRoot} busy={busy} approvals={approval ? 1 : 0} />
+            {approval ? <ApprovalPrompt request={approval} onRespond={respond} /> : <Prompt busy={busy} inputKey={inputKey} model={model} mode={mode} workspaceRoot={workspaceRoot} usage={usage} onSubmit={submit} onToggleMode={toggleMode} />}
+            <StatusFooter model={model} mode={mode} workspaceRoot={workspaceRoot} busy={busy} approvals={approval ? 1 : 0} />
           </box>
         </box>
         {sidebarVisible ? (
-          <Sidebar model={model} workspaceRoot={workspaceRoot} usage={usage} items={items} overlay={sidebarOverlay} />
+          <Sidebar model={model} mode={mode} workspaceRoot={workspaceRoot} usage={usage} items={items} overlay={sidebarOverlay} />
         ) : null}
       </box>
     </box>

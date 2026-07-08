@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog } from "electron";
 import { join } from "node:path";
-import type { ApprovalOutcome } from "@cozycode/protocol";
+import type { AgentMode, ApprovalOutcome } from "@cozycode/protocol";
 import { IPC, type AppSettingsInput } from "../shared/ipc.ts";
 import { SettingsStore } from "./settings.ts";
 import { SessionManager } from "./session-manager.ts";
@@ -66,6 +66,7 @@ function registerIpc(): void {
   });
   ipcMain.handle(IPC.sessionAbort, () => manager?.abort());
   ipcMain.handle(IPC.sessionReset, () => manager?.reset());
+  ipcMain.handle(IPC.sessionSetMode, (_e, mode: AgentMode) => manager?.setMode(mode));
   ipcMain.handle(
     IPC.approvalRespond,
     (_e, payload: { requestId: string; outcome: ApprovalOutcome }) =>

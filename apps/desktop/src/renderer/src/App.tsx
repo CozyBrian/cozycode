@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ApprovalOutcome, ApprovalRequest } from "@cozycode/protocol";
+import type { AgentMode, ApprovalOutcome, ApprovalRequest } from "@cozycode/protocol";
 import type { AppSettings } from "../../shared/ipc.ts";
 import { foldEvent, userItem, type TranscriptItem } from "./transcript.ts";
 import { Settings } from "./components/Settings.tsx";
@@ -15,6 +15,7 @@ export function App() {
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState<AgentMode>("build");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Load persisted settings once.
@@ -30,6 +31,7 @@ export function App() {
   useEffect(() => {
     const offEvent = window.cozy.onEvent((event) => {
       setItems((prev) => foldEvent(prev, event));
+      if (event.type === "mode-change") setMode(event.mode);
       if (event.type === "finish" || event.type === "error") setBusy(false);
     });
     const offApproval = window.cozy.onApprovalRequest((req) => setApproval(req));
@@ -69,6 +71,14 @@ export function App() {
     await window.cozy.reset();
     setItems([]);
     setBusy(false);
+    setMode("build");
+  };
+
+  const toggleMode = () => {
+    const next: AgentMode = mode === "plan" ? "build" : "plan";
+    void window.cozy.setMode(next);
+    // Optimistically update; a mode-change event will confirm it.
+    setMode(next);
   };
 
   if (!loaded) return <div className="app loading">Loading…</div>;
@@ -93,7 +103,15 @@ export function App() {
       <header className="topbar">
         <div className="brand">cozycode</div>
         <div className="meta">
-          {settings?.model} · {truncatePath(settings?.workspaceRoot)}
+          <button
+            type="button"
+            className={`mode-pill ${mode}`}
+            onClick={toggleMode}
+            title="Toggle Plan / Build mode"
+          >
+            {mode === "plan" ? "PLAN" : "BUILD"}
+          </button>
+          <span>{settings?.model} · {truncatePath(settings?.workspaceRoot)}</span>
         </div>
         <div className="actions">
           <Button variant="ghost" size="sm" onClick={newChat}>
@@ -124,9 +142,14 @@ export function App() {
       >
         <textarea
           value={input}
-          placeholder="Describe a task…"
+          placeholder={mode === "plan" ? "Research a plan (read-only)…" : "Describe a task…"}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
+            if (e.key === "Tab") {
+              e.preventDefault();
+              toggleMode();
+              return;
+            }
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               void submit();
@@ -166,6 +189,8 @@ function TranscriptRow({ item }: { item: TranscriptItem }) {
       return <ToolCard item={item} />;
     case "error":
       return <div className="msg error-msg">{item.text}</div>;
+    case "system":
+      return <div className="msg system">{item.text}</div>;
   }
 }
 

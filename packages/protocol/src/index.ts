@@ -65,6 +65,18 @@ export type ApprovalHandler = (
   request: ApprovalRequest,
 ) => Promise<ApprovalOutcome>;
 
+// ── Agent mode ───────────────────────────────────────────────────────────────
+
+/**
+ * The agent's operating mode.
+ *   - `build` — the default; tools run per the configured permission policy.
+ *   - `plan`  — read-only research mode. Mutating tools (write_file, edit_file)
+ *               are hard-denied regardless of policy, and only safe shell
+ *               commands are permitted. Use it to investigate and propose a
+ *               plan without touching the workspace.
+ */
+export type AgentMode = "build" | "plan";
+
 // ── Session event stream ─────────────────────────────────────────────────────
 
 export interface TokenUsage {
@@ -97,6 +109,7 @@ export type SessionEvent =
     }
   | { type: "step-finish"; stepNumber: number }
   | { type: "error"; message: string }
+  | { type: "mode-change"; mode: AgentMode }
   | { type: "finish"; reason: string; usage?: TokenUsage };
 
 // ── Config ───────────────────────────────────────────────────────────────────
@@ -127,6 +140,8 @@ export interface SessionConfig {
   systemPrompt?: string;
   /** Per-tool permission policy. */
   permissions: PermissionPolicy;
+  /** Initial agent mode; defaults to "build" when omitted. */
+  mode?: AgentMode;
   /** Hard cap on agent steps per turn. */
   maxSteps?: number;
 }

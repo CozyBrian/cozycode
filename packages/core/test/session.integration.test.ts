@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import type {
+  AgentMode,
   ApprovalOutcome,
   PermissionPolicy,
   SessionConfig,
@@ -58,12 +59,13 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-function config(policy: PermissionPolicy): SessionConfig {
+function config(policy: PermissionPolicy, mode?: AgentMode): SessionConfig {
   return {
     provider: { name: "mock", baseURL: "http://localhost/v1" },
     model: "mock-model",
     workspaceRoot: root,
     permissions: policy,
+    ...(mode ? { mode } : {}),
   };
 }
 
@@ -135,4 +137,91 @@ describe("Session (integration, mock model)", () => {
     await readFile(join(root, "out.txt"), "utf8").catch(() => (existed = false));
     expect(existed).toBe(false);
   });
-});
+
+  test("plan mode blocks write_file even when policy allows it", async () => {
+    const session = createSession(
+      config({ defaultDecision: "allow", tools: { write_file: "allow" } }, "plan"),
+      async () => "allow-once",
+      { model: twoStepWriteModel("should not be written") },
+    );
+
+    const done = collect(session.events, "finish");
+    await session.send("create out.txt");
+    const events = await done;
+
+    // The window starts in plan mode per the config.
+    expect(session.mode).toBe("plan");
+
+    const approval = events.find((e) => e.type === "tool-approval");
+    expect(approval && "decision" in approval && approval.decision).toBe("deny");
+    const result = events.find((e) => e.type === "tool-result");
+    expect(result && "isError" in result && result.isError).toBe(false);
+    expect(
+      result && "result" in result && (result.result as { denied?: boolean }).denied,
+    ).toBe(true);
+
+    let existed = true;
+    await readFile(join(root, "out.txt"), "utf8").catch(() => (existed = false));
+    expect(existed).toBe(false);
+  });
+
+  test("setMode(plan) emits a mode-change event and blocks writes", async () => {
+    const session = createSession(
+      config({ defaultDecision: "allow", tools: { write_file: "allow" } }),
+      async () => "allow-once",
+      { model: twoStepWriteModel("should not be written") },
+    );
+
+    expect(session.mode).toBe("build");
+    session.setMode("plan");
+    expect(session.mode).toBe("plan");
+
+    const done = collect(session.events, "finish");
+    await session.send("create out.txt");
+    const events = await done;
+
+    // mode-change event was pushed before the turn's events.
+    const modeEvent = events.find((e) => e.type === "mode-change");
+    expect(modeEvent && "mode" in modeEvent && modeEvent.mode).toBe("plan");
+
+    const approval = events.find((e) => e.type === "tool-approval");
+    expect(approval && "decision" in approval && approval.decision).toBe("deny");
+
+    let existed = true;
+    await readFile(join(root, "out.txt"), "utf8").catch(() => (existed = false));
+    expect(existed).toBe(false);
+  });
+
+  test("entering plan mode sets a plan file path and creates the directory", async () => {
+    const session = createSession(
+      config({ defaultDecision: "allow", tools: {} }),
+      async () => "allow-once",
+    );
+
+    session.setMode("plan");
+    const planFile = session.planFile;
+    expect(planFile).toBeTruthy();
+    expect(planFile!.startsWith(".cozycode/plans/")).toBe(true);
+    expect(planFile!.endsWith(".md")).toBe(true);
+
+    // The plan file directory should exist.
+    const { stat } = await import("node:fs/promises");
+    const dirInfo = await stat(join(root, ".cozycode/plans"));
+    expect(dirInfo.isDirectory()).toBe(true);
+  });
+
+  test("plan -> build preserves planFile path for build-agent instructions", async () => {
+    const session = createSession(
+      config({ defaultDecision: "allow", tools: {} }),
+      async () => "allow-once",
+    );
+
+    session.setMode("plan");
+    const planFile = session.planFile;
+    expect(planFile).toBeTruthy();
+
+    session.setMode("build");
+    // planFile is retained so buildAgent can reference it in instructions.
+    expect(session.mode).toBe("build");
+    expect(session.planFile).toBe(planFile);
+  });});

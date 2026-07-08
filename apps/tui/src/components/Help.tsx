@@ -6,11 +6,13 @@ const KEYS = [
   ["esc", "interrupt or close overlay"],
   ["ctrl+p", "command palette"],
   ["ctrl+o", "switch model"],
+  ["tab", "toggle plan / build"],
   ["ctrl+b", "toggle sidebar"],
   ["pgup/pgdn", "scroll transcript"],
   ["home/end", "jump transcript"],
   ["/new /clear", "reset chat"],
   ["/model", "switch model"],
+  ["/plan /build", "switch agent mode"],
   ["/help", "show this help"],
   ["/quit", "quit"],
 ] as const;

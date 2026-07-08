@@ -23,6 +23,12 @@ export const TOOL_DEFS: AnyToolDef[] = [
   searchTool,
 ];
 
+/** Tools that mutate the workspace and are hard-denied in plan mode. */
+export const MUTATING_TOOLS: ReadonlySet<string> = new Set([
+  "write_file",
+  "edit_file",
+]);
+
 export interface BuildToolsOptions {
   ctx: ToolContext;
   gate: PermissionGate;

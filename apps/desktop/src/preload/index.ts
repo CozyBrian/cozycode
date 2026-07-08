@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import type { ApprovalOutcome, ApprovalRequest, SessionEvent } from "@cozycode/protocol";
+import type { AgentMode, ApprovalOutcome, ApprovalRequest, SessionEvent } from "@cozycode/protocol";
 import { IPC, type AppSettingsInput, type CozyApi } from "../shared/ipc.ts";
 
 const api: CozyApi = {
@@ -9,6 +9,7 @@ const api: CozyApi = {
   send: (message: string) => ipcRenderer.invoke(IPC.sessionSend, message),
   abort: () => ipcRenderer.invoke(IPC.sessionAbort),
   reset: () => ipcRenderer.invoke(IPC.sessionReset),
+  setMode: (mode: AgentMode) => ipcRenderer.invoke(IPC.sessionSetMode, mode),
   respondApproval: (requestId: string, outcome: ApprovalOutcome) =>
     ipcRenderer.invoke(IPC.approvalRespond, { requestId, outcome }),
 

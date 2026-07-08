@@ -14,13 +14,19 @@ export type RenderItem =
       status: ToolStatus;
       result?: unknown;
     }
-  | { id: string; kind: "error"; text: string };
+  | { id: string; kind: "error"; text: string }
+  | { id: string; kind: "system"; text: string };
 
 let counter = 0;
 export const nextId = () => `i${counter++}`;
 
 export function userItem(text: string): RenderItem {
   return { id: nextId(), kind: "user", text };
+}
+
+/** A non-user, non-assistant notice line (e.g. a mode transition marker). */
+export function systemItem(text: string): RenderItem {
+  return { id: nextId(), kind: "system", text };
 }
 
 /**
