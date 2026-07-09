@@ -24,6 +24,16 @@ export { AsyncEventQueue } from "./events.ts";
 export { createModel } from "./model.ts";
 export { fetchModels, mergeModels } from "./models.ts";
 export { AuthStore, ProviderRegistry, auth, registry } from "./providers.ts";
+export {
+  ModelsDevCatalog,
+  modelsDev,
+  type CatalogProvider,
+  type ProviderCatalog,
+} from "./models-dev.ts";
+export { OAuthService, type OAuthFlow } from "./oauth.ts";
+import { auth as providerAuth } from "./providers.ts";
+import { OAuthService } from "./oauth.ts";
+export const oauth = new OAuthService(providerAuth);
 export { buildTools, TOOL_DEFS } from "./tools/index.ts";
 export { resolveInWorkspace } from "./tools/paths.ts";
 export {

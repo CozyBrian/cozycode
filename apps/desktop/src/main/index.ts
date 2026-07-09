@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
 import { join } from "node:path";
 import { auth, registry } from "@cozycode/core";
 import type { AgentMode, CustomProviderInput, ModelRef, PermissionReplyBody } from "@cozycode/protocol";
@@ -108,12 +108,19 @@ function registerIpc(): void {
     (_e, payload: { providerID: string; method: number }) =>
       providers.oauthStart(payload.providerID, payload.method),
   );
-  ipcMain.handle(IPC.providersOauthWait, (_e, providerID: string) =>
-    providers.oauthWait(providerID),
+  ipcMain.handle(IPC.providersOauthWait, (_e, payload: { providerID: string; attemptID: string }) =>
+    providers.oauthWait(payload.providerID, payload.attemptID),
   );
-  ipcMain.handle(IPC.providersOauthCancel, (_e, providerID: string) =>
-    providers.oauthCancel(providerID),
+  ipcMain.handle(IPC.providersOauthCancel, (_e, payload: { providerID: string; attemptID: string }) =>
+    providers.oauthCancel(payload.providerID, payload.attemptID),
   );
+  ipcMain.handle(IPC.providersOpenExternal, (_e, url: string) => {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      throw new Error("Only HTTP links can be opened.");
+    }
+    return shell.openExternal(parsed.toString());
+  });
 
   // terminal
   ipcMain.handle(IPC.termCreate, (_e, opts: { cols: number; rows: number }) =>

@@ -69,6 +69,7 @@ export class SessionManager {
     const config = await this.buildConfig(meta);
     const key = JSON.stringify({
       providerID: meta.model.providerID,
+      provider: config.provider,
       workspaceRoot: config.workspaceRoot,
     });
     if (this.session && key === this.configKey) return this.session;

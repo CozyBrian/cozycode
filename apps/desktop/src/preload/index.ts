@@ -46,9 +46,11 @@ const api: CozyApi = {
       ipcRenderer.invoke(IPC.providersDisconnect, providerID),
     oauthStart: (providerID: string, method: number) =>
       ipcRenderer.invoke(IPC.providersOauthStart, { providerID, method }),
-    oauthWait: (providerID: string) => ipcRenderer.invoke(IPC.providersOauthWait, providerID),
-    oauthCancel: (providerID: string) =>
-      ipcRenderer.invoke(IPC.providersOauthCancel, providerID),
+    oauthWait: (providerID: string, attemptID: string) =>
+      ipcRenderer.invoke(IPC.providersOauthWait, { providerID, attemptID }),
+    oauthCancel: (providerID: string, attemptID: string) =>
+      ipcRenderer.invoke(IPC.providersOauthCancel, { providerID, attemptID }),
+    openExternal: (url: string) => ipcRenderer.invoke(IPC.providersOpenExternal, url),
     onChanged(cb: (list: ProviderList) => void) {
       const listener = (_e: IpcRendererEvent, list: ProviderList) => cb(list);
       ipcRenderer.on(IPC.providersChanged, listener);

@@ -98,6 +98,7 @@ export const IPC = {
   providersOauthStart: "providers:oauth-start",
   providersOauthWait: "providers:oauth-wait",
   providersOauthCancel: "providers:oauth-cancel",
+  providersOpenExternal: "providers:open-external",
   // terminal
   termCreate: "term:create",
   termInput: "term:input",
@@ -139,8 +140,9 @@ export interface CozyApi {
     addCustom(input: CustomProviderInput): Promise<ProviderList>;
     disconnect(providerID: string): Promise<ProviderList>;
     oauthStart(providerID: string, method: number): Promise<OAuthStart>;
-    oauthWait(providerID: string): Promise<OAuthResult>;
-    oauthCancel(providerID: string): Promise<void>;
+    oauthWait(providerID: string, attemptID: string): Promise<OAuthResult>;
+    oauthCancel(providerID: string, attemptID: string): Promise<void>;
+    openExternal(url: string): Promise<void>;
     onChanged(cb: (list: ProviderList) => void): () => void;
   };
 

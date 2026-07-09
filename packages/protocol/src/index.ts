@@ -51,6 +51,7 @@ export interface ProviderList {
 }
 
 export interface OAuthStart {
+  attemptID: string;
   url: string;
   instructions?: string;
   deviceCode?: string;
@@ -177,6 +178,8 @@ export type SessionEvent =
 export interface ProviderConfig {
   /** Provider label, e.g. "openai", "openrouter", "local". */
   name: string;
+  /** Selects a provider-specific transport when credentials require one. */
+  kind?: "openai-compatible" | "openai" | "openai-oauth";
   /** OpenAI-compatible base URL, e.g. "https://api.openai.com/v1". */
   baseURL: string;
   /** API key; may be empty for local endpoints that don't require one. */

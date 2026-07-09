@@ -73,6 +73,7 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
   const sessionRef = useRef<Session | null>(null);
   // Tracks the live model so a fresh session (after /new) keeps the selection.
   const modelRef = useRef<ModelRef | null>(initialModel);
+  const registryProvidersRef = useRef(new Set<string>());
   // Tracks the live mode so a fresh session (after /new) keeps the selection.
   const modeRef = useRef<AgentMode>(initialSession?.mode ?? "build");
 
@@ -111,7 +112,9 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
   };
 
   const sessionConfig = async (ref: ModelRef): Promise<SessionConfig> => {
-    const legacy = initialSession && initialModel?.providerID === ref.providerID;
+    const legacy = initialSession
+      && initialModel?.providerID === ref.providerID
+      && !registryProvidersRef.current.has(ref.providerID);
     const provider = legacy ? initialSession.provider : await registry.providerConfig(ref.providerID);
     return {
       ...(initialSession ?? {}),
@@ -137,6 +140,22 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
 
   useEffect(() => {
     let cancelled = false;
+    if (sessionOptions && initialSession && initialModel) {
+      const provider = {
+        id: initialModel.providerID,
+        name: initialSession.provider.name,
+        source: "custom" as const,
+        authMethods: [{ type: "api" as const, label: "Configured API" }],
+        models: [...new Set([initialModel.modelID, ...(initialSession.models ?? [])])]
+          .map((id) => ({ id, name: id })),
+      };
+      setProviders({ all: [provider], connected: [provider.id], defaultModel: initialModel });
+      void startSession(initialModel, false);
+      return () => {
+        cancelled = true;
+        sessionRef.current?.close();
+      };
+    }
     void loadProviders().then(async (list) => {
       if (cancelled) return;
       const legacyProvider = initialSession && initialModel && !list.all.some((item) => item.id === initialModel.providerID)
@@ -335,9 +354,22 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
   const providersChanged = (next: ProviderList, providerID?: string) => {
     setProviders(next);
     if (providerID) {
+      registryProvidersRef.current.add(providerID);
       const provider = next.all.find((item) => item.id === providerID);
       const first = provider?.models[0];
-      if (first) return selectModel({ providerID, modelID: first.id });
+      if (first) {
+        const nextModel = { providerID, modelID: first.id };
+        modelRef.current = nextModel;
+        setModel(nextModel);
+        setRecents((items) => [
+          nextModel,
+          ...items.filter((item) => item.providerID !== providerID || item.modelID !== first.id),
+        ].slice(0, 8));
+        void startSession(nextModel, Boolean(sessionRef.current))
+          .then(() => setOverlay(null))
+          .catch((error) => commandCtx.notify("error", error instanceof Error ? error.message : String(error)));
+        return;
+      }
       return setOverlay("model");
     }
     const selected = modelRef.current;

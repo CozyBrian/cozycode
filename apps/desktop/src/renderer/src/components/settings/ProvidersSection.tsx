@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Check, Plus, Unplug } from "lucide-react";
-import type { CustomProviderInput, ProviderInfo, ProviderList } from "@cozycode/protocol";
+import { Check, Copy, ExternalLink, LoaderCircle, Plus, Unplug } from "lucide-react";
+import type { CustomProviderInput, OAuthStart, ProviderInfo, ProviderList } from "@cozycode/protocol";
 import { useApp } from "../../store/app-store";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,6 +44,80 @@ function ApiKeyForm({ provider, onDone }: { provider: ProviderInfo; onDone(): vo
       <Button type="submit" disabled={(provider.source !== "custom" && !key.trim()) || saving}>{saving ? "Saving…" : "Save"}</Button>
       <Button type="button" variant="ghost" onClick={onDone}>Cancel</Button>
     </form>
+  );
+}
+
+function ConnectCard({ provider, onDone }: { provider: ProviderInfo; onDone(): void }) {
+  const [api, setApi] = useState(false);
+  const [waiting, setWaiting] = useState<{ start: OAuthStart; method: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  if (api) return <ApiKeyForm provider={provider} onDone={() => setApi(false)} />;
+  if (waiting) {
+    return (
+      <div className="mt-3 rounded-lg border border-border/70 bg-black/10 p-4">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <LoaderCircle className="size-4 animate-spin" /> Waiting for authorization…
+        </div>
+        {waiting.start.deviceCode && (
+          <div className="my-3 select-all font-mono text-2xl font-semibold tracking-widest">
+            {waiting.start.deviceCode}
+          </div>
+        )}
+        {waiting.start.instructions && <p className="mt-2 text-xs text-muted-foreground">{waiting.start.instructions}</p>}
+        <p className="mt-2 select-all break-all text-xs text-muted-foreground">{waiting.start.url}</p>
+        {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+        <div className="mt-3 flex gap-2">
+          <Button type="button" variant="outline" onClick={() => void window.cozy.providers.openExternal(waiting.start.url)}>
+            <ExternalLink className="size-4" /> Open again
+          </Button>
+          {waiting.start.deviceCode && (
+            <Button type="button" variant="ghost" onClick={() => void navigator.clipboard.writeText(waiting.start.deviceCode!)}>
+              <Copy className="size-4" /> Copy code
+            </Button>
+          )}
+          <Button type="button" variant="ghost" onClick={() => {
+            void window.cozy.providers.oauthCancel(provider.id, waiting.start.attemptID);
+            setWaiting(null);
+          }}>Cancel</Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      {provider.authMethods.map((method, index) => (
+        <Button
+          key={`${method.type}:${index}`}
+          type="button"
+          variant="outline"
+          onClick={async () => {
+            setError(null);
+            if (method.type === "api") return setApi(true);
+            try {
+              const start = await window.cozy.providers.oauthStart(provider.id, index);
+              setWaiting({ start, method: index });
+              const result = await window.cozy.providers.oauthWait(provider.id, start.attemptID);
+              if (result.status === "complete") {
+                apply(await window.cozy.providers.list());
+                onDone();
+              } else if (result.status === "failed") {
+                setError(result.message || "Authorization failed.");
+              } else {
+                setWaiting(null);
+              }
+            } catch (cause) {
+              setError(cause instanceof Error ? cause.message : String(cause));
+            }
+          }}
+        >
+          {method.label}
+        </Button>
+      ))}
+      <Button type="button" variant="ghost" onClick={onDone}>Cancel</Button>
+      {error && <p className="w-full text-xs text-destructive">{error}</p>}
+    </div>
   );
 }
 
@@ -98,9 +172,13 @@ export function ProvidersSection() {
   const providers = useApp((state) => state.providers);
   const [connecting, setConnecting] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
-  const sorted = [...(providers?.all ?? [])].sort((a, b) =>
-    Number(providers?.connected.includes(b.id)) - Number(providers?.connected.includes(a.id)),
-  );
+  const [query, setQuery] = useState("");
+  const sorted = [...(providers?.all ?? [])]
+    .filter((provider) => `${provider.name} ${provider.id}`.toLowerCase().includes(query.toLowerCase()))
+    .sort((a, b) => {
+      const connected = Number(providers?.connected.includes(b.id)) - Number(providers?.connected.includes(a.id));
+      return connected || a.name.localeCompare(b.name);
+    });
   return (
     <section className="rounded-2xl border border-border/70 bg-white/3 p-5">
       <div className="mb-4 flex items-center justify-between">
@@ -110,6 +188,12 @@ export function ProvidersSection() {
         </div>
         <Button variant="outline" onClick={() => setAdding(true)}><Plus className="size-4" /> Add custom</Button>
       </div>
+      <Input
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder="Search providers…"
+        className="mb-3"
+      />
       <div className="grid gap-2">
         {sorted.map((provider) => {
           const connected = providers?.connected.includes(provider.id) ?? false;
@@ -134,7 +218,7 @@ export function ProvidersSection() {
                   <Button variant="outline" onClick={() => setConnecting(provider.id)}>Connect</Button>
                 )}
               </div>
-              {connecting === provider.id && <ApiKeyForm provider={provider} onDone={() => setConnecting(null)} />}
+              {connecting === provider.id && <ConnectCard provider={provider} onDone={() => setConnecting(null)} />}
             </div>
           );
         })}
