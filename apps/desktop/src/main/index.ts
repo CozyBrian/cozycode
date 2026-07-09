@@ -23,6 +23,7 @@ function createWindow(): void {
     ...(isMac
       ? {
           titleBarStyle: "hiddenInset" as const,
+          trafficLightPosition: { x: 18, y: 18 },
           vibrancy: "under-window" as const,
           visualEffectState: "active" as const,
           backgroundColor: "#00000000",

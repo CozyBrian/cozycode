@@ -1,8 +1,6 @@
 import { useMemo, useState } from "react";
 import {
-  CalendarClock,
   FolderClosed,
-  Plug,
   Search as SearchIcon,
   SquarePen,
 } from "lucide-react";
@@ -10,6 +8,7 @@ import { useApp } from "../store/app-store";
 import type { SessionMeta } from "../../../shared/ipc.ts";
 import { SidebarSessionRow } from "./SidebarSessionRow";
 import { SidebarFooter } from "./SidebarFooter";
+import { TitleBar } from "./TitleBar";
 import { cn } from "@/lib/utils";
 
 function ActionRow({
@@ -47,7 +46,6 @@ export function Sidebar() {
   const open = useApp((s) => s.sidebarOpen);
   const sessions = useApp((s) => s.sessions);
   const createSession = useApp((s) => s.createSession);
-  const openSettings = useApp((s) => s.openSettings);
   const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState("");
   const now = Date.now();
@@ -76,12 +74,14 @@ export function Sidebar() {
     <aside
       className={cn(
         "h-full shrink-0 overflow-hidden bg-sidebar backdrop-blur-2xl transition-[width] duration-200 ease-out",
-        open ? "w-[290px] border-r border-sidebar-border" : "w-0 border-r-0",
+        open ? "w-72.5 border-r border-sidebar-border" : "w-0 border-r-0",
       )}
     >
-      <div className="flex h-full w-[290px] flex-col">
+      <div className="flex h-full w-72.5 flex-col">
+        <TitleBar />
+
         {/* Top actions */}
-        <nav className="app-drag flex flex-col gap-0.5 px-3 pt-3 pb-1">
+        <nav className="app-drag flex flex-col gap-0.5 px-3 pt-1 pb-1">
           <ActionRow
             icon={<SquarePen />}
             label="New chat"
@@ -93,8 +93,6 @@ export function Sidebar() {
             active={searching}
             onClick={() => setSearching((v) => !v)}
           />
-          <ActionRow icon={<CalendarClock />} label="Scheduled" onClick={openSettings} />
-          <ActionRow icon={<Plug />} label="Plugins" onClick={openSettings} />
         </nav>
 
         {searching && (

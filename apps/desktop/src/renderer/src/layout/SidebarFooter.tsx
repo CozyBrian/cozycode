@@ -4,10 +4,15 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
 export function SidebarFooter() {
   const settings = useApp((s) => s.settings);
+  const openSettings = useApp((s) => s.openSettings);
   const name = deriveName(settings?.providerName);
 
   return (
-    <div className="app-no-drag flex items-center gap-2.5 border-t border-sidebar-border px-3 py-3">
+    <button
+      type="button"
+      onClick={openSettings}
+      className="app-no-drag flex w-full items-center gap-2.5 border-t border-sidebar-border px-3 py-3 text-left transition-colors hover:bg-white/6"
+    >
       <Avatar className="size-7">
         <AvatarFallback>{name.slice(0, 2).toUpperCase()}</AvatarFallback>
       </Avatar>
@@ -16,7 +21,7 @@ export function SidebarFooter() {
         <div className="text-xs text-muted-foreground">cozycode</div>
       </div>
       <Smartphone className="size-4 text-muted-foreground" />
-    </div>
+    </button>
   );
 }
 

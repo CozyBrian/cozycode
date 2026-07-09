@@ -61,7 +61,7 @@ export function PermissionPill() {
           <ChevronDown className="size-3.5 opacity-70" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="min-w-[240px]">
+      <DropdownMenuContent align="start" className="min-w-60">
         {PRESETS.map((p) => (
           <DropdownMenuItem key={p.value} onSelect={() => setPreset(p.value)}>
             {p.icon}

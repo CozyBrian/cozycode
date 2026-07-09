@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, PanelLeft, PanelBottom } from "lucide-react";
+import { ChevronLeft, ChevronRight, PanelLeft } from "lucide-react";
 import { useApp } from "../store/app-store";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -36,33 +36,29 @@ function IconButton({
   );
 }
 
-export function TitleBar() {
+export function TitleControls() {
   const sidebarOpen = useApp((s) => s.sidebarOpen);
-  const terminalOpen = useApp((s) => s.terminalOpen);
   const toggleSidebar = useApp((s) => s.toggleSidebar);
-  const toggleTerminal = useApp((s) => s.toggleTerminal);
 
   return (
-    <header className="app-drag flex h-12 items-center justify-between border-b border-border/60 px-3">
-      {/* Left: clears the native traffic lights, then nav arrows. */}
-      <div className="flex items-center gap-1 pl-18">
-        <IconButton label="Back" disabled>
-          <ChevronLeft className="size-4" />
-        </IconButton>
-        <IconButton label="Forward" disabled>
-          <ChevronRight className="size-4" />
-        </IconButton>
-      </div>
+    <div className="flex items-center gap-1 pl-18">
+      <IconButton label="Toggle sidebar  ⌘B" onClick={toggleSidebar} active={sidebarOpen}>
+        <PanelLeft className="size-4" />
+      </IconButton>
+      <IconButton label="Back" disabled>
+        <ChevronLeft className="size-4" />
+      </IconButton>
+      <IconButton label="Forward" disabled>
+        <ChevronRight className="size-4" />
+      </IconButton>
+    </div>
+  );
+}
 
-      {/* Right: panel toggles. */}
-      <div className="flex items-center gap-1">
-        <IconButton label="Toggle sidebar  ⌘B" onClick={toggleSidebar} active={sidebarOpen}>
-          <PanelLeft className="size-4" />
-        </IconButton>
-        <IconButton label="Toggle terminal  ⌘J" onClick={toggleTerminal} active={terminalOpen}>
-          <PanelBottom className="size-4" />
-        </IconButton>
-      </div>
+export function TitleBar() {
+  return (
+    <header className="app-drag flex h-12 w-full shrink-0 items-center px-3">
+      <TitleControls />
     </header>
   );
 }

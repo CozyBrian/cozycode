@@ -170,6 +170,12 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   async createSession(workspaceRoot) {
+    const empty = get().sessions.find((s) => s.messageCount === 0);
+    if (empty) {
+      if (empty.id !== get().activeId) await get().activateSession(empty.id);
+      return;
+    }
+
     const snap = await window.cozy.createSession(
       workspaceRoot !== undefined ? { workspaceRoot } : undefined,
     );

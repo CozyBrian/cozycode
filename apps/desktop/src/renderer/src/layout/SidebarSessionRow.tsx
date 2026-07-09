@@ -63,13 +63,19 @@ export function SidebarSessionRow({ session, now }: { session: SessionMeta; now:
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
+                onPointerDown={(e) => e.stopPropagation()}
                 onClick={(e) => e.stopPropagation()}
-                className="hidden size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-white/10 hover:text-foreground group-hover:flex"
+                className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-white/10 hover:text-foreground group-hover:opacity-100 data-[state=open]:opacity-100"
               >
                 <MoreHorizontal className="size-4" />
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+            <DropdownMenuContent
+              side="bottom"
+              align="end"
+              sideOffset={6}
+              onClick={(e) => e.stopPropagation()}
+            >
               <DropdownMenuItem
                 onSelect={() => {
                   setDraft(session.title);

@@ -2,13 +2,14 @@ import { useEffect } from "react";
 import { useApp } from "./store/app-store";
 import { useGlobalShortcuts } from "./lib/shortcuts";
 import { AppLayout } from "./layout/AppLayout";
-import { SettingsDialog } from "./components/SettingsDialog";
+import { SettingsPage } from "./components/SettingsPage";
 import { PermissionModal } from "./components/PermissionModal";
 import { Help } from "./components/Help";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 export function App() {
   const loaded = useApp((s) => s.loaded);
+  const settingsOpen = useApp((s) => s.settingsOpen);
   const permissionQueue = useApp((s) => s.permissionQueue);
   const helpOpen = useApp((s) => s.helpOpen);
   const setHelpOpen = useApp((s) => s.setHelpOpen);
@@ -45,8 +46,7 @@ export function App() {
 
   return (
     <TooltipProvider>
-      <AppLayout />
-      <SettingsDialog />
+      {settingsOpen ? <SettingsPage /> : <AppLayout />}
       {permissionQueue[0] && (
         <PermissionModal
           request={permissionQueue[0]}
