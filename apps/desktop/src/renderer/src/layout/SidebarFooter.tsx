@@ -3,14 +3,15 @@ import { useApp } from "../store/app-store";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
 export function SidebarFooter() {
-  const settings = useApp((s) => s.settings);
+  const model = useApp((s) => s.model);
+  const providers = useApp((s) => s.providers);
   const openSettings = useApp((s) => s.openSettings);
-  const name = deriveName(settings?.providerName);
+  const name = providers?.all.find((provider) => provider.id === model?.providerID)?.name ?? "cozy";
 
   return (
     <button
       type="button"
-      onClick={openSettings}
+      onClick={() => openSettings()}
       className="app-no-drag flex w-full items-center gap-2.5 border-t border-sidebar-border px-3 py-3 text-left transition-colors hover:bg-white/6"
     >
       <Avatar className="size-7">
@@ -23,9 +24,4 @@ export function SidebarFooter() {
       <Smartphone className="size-4 text-muted-foreground" />
     </button>
   );
-}
-
-function deriveName(provider?: string): string {
-  if (!provider) return "cozy";
-  return provider === "openai-compatible" ? "cozy" : provider;
 }

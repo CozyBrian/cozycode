@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { homedir } from "node:os";
-import type { PermissionConfig, SessionConfig } from "@cozycode/protocol";
+import type { ModelRef, PermissionConfig, SessionConfig } from "@cozycode/protocol";
 import { DEFAULT_RULESET, mergeRulesets, rulesetFromConfig } from "@cozycode/core";
 
 /** Shape of an optional on-disk config file. */
@@ -17,9 +17,9 @@ interface FileConfig {
 }
 
 export interface ResolvedConfig {
-  session: SessionConfig;
-  /** For display in the status bar. */
-  model: string;
+  /** Legacy env/file override. Registry-backed sessions are built in the app. */
+  session: SessionConfig | null;
+  initialModel: ModelRef | null;
   workspaceRoot: string;
   /** Where non-env values came from, for diagnostics. */
   configSource?: string;
@@ -28,7 +28,8 @@ export interface ResolvedConfig {
 /**
  * Resolve run configuration from (in order of precedence) environment
  * variables, a `cozycode.json` in the workspace, then `~/.config/cozycode/
- * config.json`. Throws a helpful error when required fields are missing.
+ * config.json`. An incomplete configuration is valid: the TUI will open
+ * provider onboarding and create a session after a model is available.
  */
 export function resolveConfig(argv: string[], env: NodeJS.ProcessEnv): ResolvedConfig {
   const positional = argv.find((a) => !a.startsWith("-"));
@@ -52,30 +53,24 @@ export function resolveConfig(argv: string[], env: NodeJS.ProcessEnv): ResolvedC
   const baseURL = env.COZY_BASE_URL ?? file.baseURL;
   const model = env.COZY_MODEL ?? file.model;
   const apiKey = env.COZY_API_KEY ?? file.apiKey;
-  const providerName = env.COZY_PROVIDER ?? file.provider ?? "openai-compatible";
-
-  const missing: string[] = [];
-  if (!baseURL) missing.push("baseURL (COZY_BASE_URL)");
-  if (!model) missing.push("model (COZY_MODEL)");
-  if (missing.length > 0) {
-    throw new Error(
-      `Missing required config: ${missing.join(", ")}.\n` +
-        `Set them via environment variables, a cozycode.json in the workspace, ` +
-        `or ~/.config/cozycode/config.json.`,
-    );
-  }
+  const providerName = env.COZY_PROVIDER ?? file.provider ?? (baseURL ? "openai-compatible" : undefined);
+  const initialModel = providerName && model ? { providerID: providerName, modelID: model } : null;
+  const permissions = file.permissions
+    ? mergeRulesets(DEFAULT_RULESET, rulesetFromConfig(file.permissions))
+    : DEFAULT_RULESET;
+  const session = baseURL && model
+    ? {
+        provider: { name: providerName ?? "openai-compatible", baseURL, apiKey },
+        model,
+        models: Array.isArray(file.models) ? file.models : undefined,
+        workspaceRoot,
+        permissions,
+      }
+    : null;
 
   return {
-    session: {
-      provider: { name: providerName, baseURL: baseURL!, apiKey },
-      model: model!,
-      models: Array.isArray(file.models) ? file.models : undefined,
-      workspaceRoot,
-      permissions: file.permissions
-        ? mergeRulesets(DEFAULT_RULESET, rulesetFromConfig(file.permissions))
-        : DEFAULT_RULESET,
-    },
-    model: model!,
+    session,
+    initialModel,
     workspaceRoot,
     configSource,
   };

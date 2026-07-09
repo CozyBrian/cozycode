@@ -1,11 +1,14 @@
 import { app, BrowserWindow, ipcMain, dialog } from "electron";
 import { join } from "node:path";
-import type { AgentMode, PermissionReplyBody } from "@cozycode/protocol";
+import { auth, registry } from "@cozycode/core";
+import type { AgentMode, CustomProviderInput, ModelRef, PermissionReplyBody } from "@cozycode/protocol";
 import { IPC, type AppSettingsInput, type PermissionPreset } from "../shared/ipc.ts";
 import { SettingsStore } from "./settings.ts";
 import { SessionManager } from "./session-manager.ts";
+import { ProviderBridge } from "./providers.ts";
 
 const settings = new SettingsStore();
+const providers = new ProviderBridge();
 let manager: SessionManager | null = null;
 
 const isMac = process.platform === "darwin";
@@ -35,7 +38,7 @@ function createWindow(): void {
     },
   });
 
-  manager = new SessionManager(win.webContents, settings);
+  manager = new SessionManager(win.webContents, settings, providers);
 
   win.on("ready-to-show", () => win.show());
   win.on("closed", () => {
@@ -68,7 +71,7 @@ function registerIpc(): void {
   });
   ipcMain.handle(IPC.sessionAbort, () => manager?.abort());
   ipcMain.handle(IPC.sessionSetMode, (_e, mode: AgentMode) => manager?.setMode(mode));
-  ipcMain.handle(IPC.sessionSetModel, (_e, model: string) => manager?.setModel(model));
+  ipcMain.handle(IPC.sessionSetModel, (_e, model: ModelRef) => manager?.setModel(model));
   ipcMain.handle(IPC.sessionSetPreset, (_e, preset: PermissionPreset) =>
     manager?.setPreset(preset),
   );
@@ -87,8 +90,30 @@ function registerIpc(): void {
     manager?.rename(payload.id, payload.title),
   );
 
-  // models
-  ipcMain.handle(IPC.modelsList, () => manager?.listModels() ?? []);
+  // providers
+  ipcMain.handle(IPC.providersList, () => providers.list());
+  ipcMain.handle(
+    IPC.providersConnectApi,
+    (_e, payload: { providerID: string; apiKey: string }) =>
+      providers.connectApi(payload.providerID, payload.apiKey),
+  );
+  ipcMain.handle(IPC.providersAddCustom, (_e, input: CustomProviderInput) =>
+    providers.addCustom(input),
+  );
+  ipcMain.handle(IPC.providersDisconnect, (_e, providerID: string) =>
+    providers.disconnect(providerID),
+  );
+  ipcMain.handle(
+    IPC.providersOauthStart,
+    (_e, payload: { providerID: string; method: number }) =>
+      providers.oauthStart(payload.providerID, payload.method),
+  );
+  ipcMain.handle(IPC.providersOauthWait, (_e, providerID: string) =>
+    providers.oauthWait(providerID),
+  );
+  ipcMain.handle(IPC.providersOauthCancel, (_e, providerID: string) =>
+    providers.oauthCancel(providerID),
+  );
 
   // terminal
   ipcMain.handle(IPC.termCreate, (_e, opts: { cols: number; rows: number }) =>
@@ -105,7 +130,8 @@ function registerIpc(): void {
   ipcMain.handle(IPC.termKill, (_e, termId: string) => manager?.terminals.kill(termId));
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  await settings.migrateProviderCredentials(registry, auth);
   registerIpc();
   createWindow();
   app.on("activate", () => {

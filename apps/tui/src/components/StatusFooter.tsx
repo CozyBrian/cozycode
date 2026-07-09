@@ -2,14 +2,14 @@ import type { AgentMode } from "@cozycode/protocol";
 import { shortPath, theme } from "../theme.ts";
 
 interface Props {
-  model: string;
+  modelLabel: string;
   mode: AgentMode;
   workspaceRoot: string;
   busy: boolean;
   approvals: number;
 }
 
-export function StatusFooter({ model, mode, workspaceRoot, busy, approvals }: Props) {
+export function StatusFooter({ modelLabel, mode, workspaceRoot, busy, approvals }: Props) {
   return (
     <box flexDirection="row" justifyContent="space-between">
       <text fg={theme.muted}>{shortPath(workspaceRoot)}</text>
@@ -21,7 +21,7 @@ export function StatusFooter({ model, mode, workspaceRoot, busy, approvals }: Pr
         ) : (
           <span style={{ fg: theme.success }}>BUILD</span>
         )}
-        {" · "}{model}
+        {" · "}{modelLabel}
         {approvals > 0 ? ` · △ ${approvals}` : ""}
       </text>
     </box>

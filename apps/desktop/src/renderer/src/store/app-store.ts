@@ -1,8 +1,10 @@
 import { create } from "zustand";
 import type {
   AgentMode,
+  ModelRef,
   PermissionReply,
   PermissionRequest,
+  ProviderList,
   SessionEvent,
 } from "@cozycode/protocol";
 import type {
@@ -28,7 +30,9 @@ export interface AppState {
   terminalOpen: boolean;
   terminalHeight: number;
   settingsOpen: boolean;
+  settingsSection: SettingsSection;
   helpOpen: boolean;
+  modelPickerOpen: boolean;
 
   // sessions
   sessions: SessionMeta[];
@@ -38,8 +42,9 @@ export interface AppState {
   items: TranscriptItem[];
   busy: boolean;
   preset: PermissionPreset;
-  model: string;
-  models: string[];
+  model: ModelRef | null;
+  providers: ProviderList | null;
+  recentModels: ModelRef[];
   /** FIFO of pending permission asks; the modal shows the head, badge shows length. */
   permissionQueue: PermissionRequest[];
   input: string;
@@ -55,9 +60,10 @@ export interface AppState {
   toggleSidebar(): void;
   toggleTerminal(): void;
   setTerminalHeight(px: number): void;
-  openSettings(): void;
+  openSettings(section?: SettingsSection): void;
   closeSettings(): void;
   setHelpOpen(open: boolean): void;
+  setModelPickerOpen(open: boolean): void;
   setInput(v: string): void;
   setSettings(s: AppSettings): void;
 
@@ -71,8 +77,8 @@ export interface AppState {
   abort(): void;
   setPreset(preset: PermissionPreset): void;
   setMode(mode: AgentMode): void;
-  setModel(model: string): void;
-  refreshModels(): Promise<void>;
+  setModel(model: ModelRef): void;
+  refreshProviders(): Promise<void>;
   replyPermission(requestId: string, reply: PermissionReply, message?: string): void;
   systemNote(text: string, error?: boolean): void;
 
@@ -81,6 +87,14 @@ export interface AppState {
   closeTerm(id: string): void;
   setActiveTerm(id: string): void;
 }
+
+export type SettingsSection =
+  | "general"
+  | "providers"
+  | "workspace"
+  | "permissions"
+  | "appearance"
+  | "advanced";
 
 const presetToMode = (p: PermissionPreset): AgentMode => (p === "plan" ? "plan" : "build");
 
@@ -101,7 +115,9 @@ export const useApp = create<AppState>((set, get) => ({
   terminalOpen: false,
   terminalHeight: 260,
   settingsOpen: false,
+  settingsSection: "general",
   helpOpen: false,
+  modelPickerOpen: false,
 
   sessions: [],
   activeId: null,
@@ -109,8 +125,9 @@ export const useApp = create<AppState>((set, get) => ({
   items: [],
   busy: false,
   preset: "ask",
-  model: "",
-  models: [],
+  model: null,
+  providers: null,
+  recentModels: [],
   permissionQueue: [],
   input: "",
 
@@ -119,8 +136,16 @@ export const useApp = create<AppState>((set, get) => ({
 
   async bootstrap() {
     const settings = await window.cozy.getSettings();
-    const configured = Boolean(settings?.baseURL && settings?.model && settings?.workspaceRoot);
-    set({ settings, loaded: true, settingsOpen: !configured });
+    const providers = await window.cozy.providers.list();
+    const configured = Boolean(settings?.workspaceRoot && providers.connected.length > 0);
+    set({
+      settings,
+      providers,
+      recentModels: settings?.recentModels ?? [],
+      loaded: true,
+      settingsOpen: !configured,
+      settingsSection: providers.connected.length ? "general" : "providers",
+    });
     const sessions = await window.cozy.listSessions();
     set({ sessions });
     if (configured) {
@@ -136,7 +161,6 @@ export const useApp = create<AppState>((set, get) => ({
         busy: false,
       });
       void get().refreshSessions();
-      void get().refreshModels();
     }
   },
 
@@ -159,9 +183,10 @@ export const useApp = create<AppState>((set, get) => ({
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   toggleTerminal: () => set((s) => ({ terminalOpen: !s.terminalOpen })),
   setTerminalHeight: (px) => set({ terminalHeight: Math.max(120, Math.min(600, px)) }),
-  openSettings: () => set({ settingsOpen: true }),
+  openSettings: (section = "general") => set({ settingsOpen: true, settingsSection: section }),
   closeSettings: () => set({ settingsOpen: false }),
   setHelpOpen: (open) => set({ helpOpen: open }),
+  setModelPickerOpen: (open) => set({ modelPickerOpen: open }),
   setInput: (v) => set({ input: v }),
   setSettings: (s) => set({ settings: s }),
 
@@ -203,7 +228,6 @@ export const useApp = create<AppState>((set, get) => ({
       input: "",
       permissionQueue: [],
     });
-    void get().refreshModels();
   },
 
   async deleteSession(id) {
@@ -253,12 +277,21 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   setModel(model) {
-    set({ model });
+    const recentModels = [model, ...get().recentModels.filter(
+      (item) => item.providerID !== model.providerID || item.modelID !== model.modelID,
+    )].slice(0, 8);
+    set({ model, recentModels, modelPickerOpen: false });
     void window.cozy.setModel(model);
+    const settings = get().settings;
+    if (settings) {
+      const next = { ...settings, recentModels };
+      set({ settings: next });
+      void window.cozy.saveSettings(next);
+    }
   },
 
-  async refreshModels() {
-    set({ models: await window.cozy.listModels() });
+  async refreshProviders() {
+    set({ providers: await window.cozy.providers.list() });
   },
 
   replyPermission(requestId, reply, message) {

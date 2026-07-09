@@ -28,10 +28,14 @@ export function App() {
     const offSessions = window.cozy.onSessionsChanged((sessions) =>
       useApp.setState({ sessions }),
     );
+    const offProviders = window.cozy.providers.onChanged((providers) =>
+      useApp.setState({ providers }),
+    );
     const offExit = window.cozy.term.onExit((p) => useApp.getState().closeTerm(p.termId));
     return () => {
       offEvent();
       offSessions();
+      offProviders();
       offExit();
     };
   }, []);

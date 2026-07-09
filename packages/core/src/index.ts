@@ -23,6 +23,7 @@ export {
 export { AsyncEventQueue } from "./events.ts";
 export { createModel } from "./model.ts";
 export { fetchModels, mergeModels } from "./models.ts";
+export { AuthStore, ProviderRegistry, auth, registry } from "./providers.ts";
 export { buildTools, TOOL_DEFS } from "./tools/index.ts";
 export { resolveInWorkspace } from "./tools/paths.ts";
 export {

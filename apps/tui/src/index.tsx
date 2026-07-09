@@ -27,8 +27,8 @@ async function main(): Promise<void> {
 
   root.render(
     <App
-      config={resolved.session}
-      model={resolved.model}
+      initialSession={resolved.session}
+      initialModel={resolved.initialModel}
       workspaceRoot={resolved.workspaceRoot}
       onExit={exit}
     />,

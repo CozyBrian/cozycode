@@ -71,8 +71,8 @@ async function renderApp(permissions: PermissionConfig, content: string) {
   const cfg = config(permissions);
   return testRender(
     <App
-      config={cfg}
-      model={cfg.model}
+      initialSession={cfg}
+      initialModel={{ providerID: cfg.provider.name, modelID: cfg.model }}
       workspaceRoot={root}
       sessionOptions={{ model: twoStepWriteModel(content) }}
       onExit={() => {}}

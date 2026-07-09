@@ -16,6 +16,59 @@ export interface ChatMessage {
   content: string;
 }
 
+// ── Providers and models ────────────────────────────────────────────────────
+
+export interface ModelRef {
+  providerID: string;
+  modelID: string;
+}
+
+export interface ModelInfo {
+  id: string;
+  name: string;
+  contextWindow?: number;
+  maxOutput?: number;
+  cost?: { input: number; output: number };
+}
+
+export interface AuthMethodInfo {
+  type: "oauth" | "api";
+  label: string;
+}
+
+export interface ProviderInfo {
+  id: string;
+  name: string;
+  models: ModelInfo[];
+  authMethods: AuthMethodInfo[];
+  source: "builtin" | "custom";
+}
+
+export interface ProviderList {
+  all: ProviderInfo[];
+  connected: string[];
+  defaultModel?: ModelRef;
+}
+
+export interface OAuthStart {
+  url: string;
+  instructions?: string;
+  deviceCode?: string;
+}
+
+export type OAuthResult =
+  | { status: "complete" }
+  | { status: "failed"; message?: string }
+  | { status: "cancelled" };
+
+export interface CustomProviderInput {
+  id: string;
+  name?: string;
+  baseURL: string;
+  apiKey?: string;
+  models?: string[];
+}
+
 // ── Permissions ──────────────────────────────────────────────────────────────
 //
 // Modeled on opencode's rule-based permission system. A rule matches a

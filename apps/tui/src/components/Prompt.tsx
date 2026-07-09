@@ -8,7 +8,7 @@ import { shortPath, theme } from "../theme.ts";
 interface Props {
   busy: boolean;
   inputKey: number;
-  model: string;
+  modelLabel: string;
   mode: AgentMode;
   workspaceRoot: string;
   usage?: TokenUsage;
@@ -33,7 +33,7 @@ function commandQuery(text: string): string | null {
   return match ? match[1]! : null;
 }
 
-export function Prompt({ busy, inputKey, model, mode, workspaceRoot, usage, onSubmit, onToggleMode }: Props) {
+export function Prompt({ busy, inputKey, modelLabel, mode, workspaceRoot, usage, onSubmit, onToggleMode }: Props) {
   const dimensions = useTerminalDimensions();
   const input = useRef<TextareaRenderable | null>(null);
   const maxHeight = Math.max(6, Math.floor((dimensions.height || 24) / 3));
@@ -135,7 +135,7 @@ export function Prompt({ busy, inputKey, model, mode, workspaceRoot, usage, onSu
             <span style={{ fg: theme.success }}>BUILD</span>
           )}
           {" · "}
-          {model} · {shortPath(workspaceRoot)}
+          {modelLabel} · {shortPath(workspaceRoot)}
         </text>
         <box flexDirection="row" justifyContent="space-between">
           {busy ? (

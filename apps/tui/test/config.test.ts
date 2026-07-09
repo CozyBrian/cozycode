@@ -19,9 +19,10 @@ describe("resolveConfig", () => {
       COZY_MODEL: "m1",
       COZY_API_KEY: "k",
     } as NodeJS.ProcessEnv);
-    expect(r.session.provider.baseURL).toBe("https://x/v1");
-    expect(r.session.model).toBe("m1");
-    expect(r.session.provider.apiKey).toBe("k");
+    expect(r.session?.provider.baseURL).toBe("https://x/v1");
+    expect(r.session?.model).toBe("m1");
+    expect(r.session?.provider.apiKey).toBe("k");
+    expect(r.initialModel).toEqual({ providerID: "openai-compatible", modelID: "m1" });
     expect(r.workspaceRoot).toBe(root);
   });
 
@@ -31,8 +32,8 @@ describe("resolveConfig", () => {
       JSON.stringify({ baseURL: "https://file/v1", model: "file-model" }),
     );
     const r = resolveConfig([root], {} as NodeJS.ProcessEnv);
-    expect(r.session.provider.baseURL).toBe("https://file/v1");
-    expect(r.model).toBe("file-model");
+    expect(r.session?.provider.baseURL).toBe("https://file/v1");
+    expect(r.initialModel?.modelID).toBe("file-model");
     expect(r.configSource).toContain("cozycode.json");
   });
 
@@ -42,12 +43,14 @@ describe("resolveConfig", () => {
       JSON.stringify({ baseURL: "https://file/v1", model: "file-model" }),
     );
     const r = resolveConfig([root], { COZY_MODEL: "env-model" } as NodeJS.ProcessEnv);
-    expect(r.model).toBe("env-model");
-    expect(r.session.provider.baseURL).toBe("https://file/v1");
+    expect(r.initialModel?.modelID).toBe("env-model");
+    expect(r.session?.provider.baseURL).toBe("https://file/v1");
   });
 
-  test("throws a helpful error when required fields are missing", () => {
-    expect(() => resolveConfig([root], {} as NodeJS.ProcessEnv)).toThrow(/Missing required config/);
+  test("allows onboarding when provider and model are missing", () => {
+    const r = resolveConfig([root], {} as NodeJS.ProcessEnv);
+    expect(r.session).toBeNull();
+    expect(r.initialModel).toBeNull();
   });
 
   test("defaults to the core ruleset when no permissions are configured", () => {
@@ -56,7 +59,7 @@ describe("resolveConfig", () => {
       COZY_MODEL: "m1",
     } as NodeJS.ProcessEnv);
     // edit asks by default in the core ruleset.
-    expect(r.session.permissions?.some((rule) => rule.permission === "edit")).toBe(true);
+    expect(r.session?.permissions?.some((rule) => rule.permission === "edit")).toBe(true);
   });
 
   test("merges permission overrides from the config file over the default ruleset", async () => {
@@ -70,7 +73,7 @@ describe("resolveConfig", () => {
     );
     const r = resolveConfig([root], {} as NodeJS.ProcessEnv);
     // The override is merged last, so it wins (last-match-wins).
-    const last = r.session.permissions!.filter((rule) => rule.permission === "edit").at(-1);
+    const last = r.session!.permissions!.filter((rule) => rule.permission === "edit").at(-1);
     expect(last?.action).toBe("allow");
   });
 });

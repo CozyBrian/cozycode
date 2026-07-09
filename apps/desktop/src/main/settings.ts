@@ -1,176 +1,90 @@
 import { app, safeStorage } from "electron";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { dirname, join, parse, resolve } from "node:path";
-import { homedir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import type { AuthStore, ProviderRegistry } from "@cozycode/core";
 import type { AppSettings, AppSettingsInput } from "../shared/ipc.ts";
 
-interface StoredSettings {
-  providerName: string;
-  baseURL: string;
-  model: string;
-  workspaceRoot: string;
-  permissions?: AppSettings["permissions"];
-  /** Base64 of the encrypted (or plaintext fallback) API key. */
+interface StoredSettings extends Partial<AppSettings> {
+  providerName?: string;
+  baseURL?: string;
+  model?: string;
   apiKeyEnc?: string;
   apiKeyPlain?: string;
 }
 
-interface FileConfig {
-  provider?: string;
-  providerName?: string;
-  baseURL?: string;
-  apiKey?: string;
-  model?: string;
-  workspaceRoot?: string;
-}
-
-/**
- * Settings persistence. The API key is encrypted with the OS keychain via
- * Electron's safeStorage when available, and never handed back to the renderer
- * (only a `hasApiKey` flag is exposed).
- */
 export class SettingsStore {
   private readonly file = join(app.getPath("userData"), "cozycode-settings.json");
-  private cache: StoredSettings | null = null;
-  private cacheFromFileConfig = false;
+  private cache: AppSettings | null | undefined;
+  legacyProviderID = "openai";
 
-  private async load(): Promise<StoredSettings | null> {
-    if (this.cache) return this.cache;
+  private async readStored(): Promise<StoredSettings | null> {
     try {
-      const stored = JSON.parse(await readFile(this.file, "utf8")) as StoredSettings;
-      if (isConfigured(stored)) {
-        this.cache = normalize(stored);
-        this.cacheFromFileConfig = false;
-        return this.cache;
-      }
+      return JSON.parse(await readFile(this.file, "utf8")) as StoredSettings;
     } catch {
-      // Fall through to shared JSON config resolution.
+      return null;
     }
-    this.cache = await this.loadFileConfig();
-    this.cacheFromFileConfig = Boolean(this.cache);
-    return this.cache;
-  }
-
-  private async loadFileConfig(): Promise<StoredSettings | null> {
-    const candidates = unique([
-      ...walkUp(process.cwd()).map((dir) => join(dir, "cozycode.json")),
-      ...walkUp(app.getAppPath()).map((dir) => join(dir, "cozycode.json")),
-      join(homedir(), ".config", "cozycode", "config.json"),
-    ]);
-
-    for (const path of candidates) {
-      const parsed = await tryReadJson(path);
-      if (!parsed?.baseURL || !parsed.model) continue;
-      return {
-        providerName: parsed.providerName ?? parsed.provider ?? "openai-compatible",
-        baseURL: parsed.baseURL,
-        model: parsed.model,
-        workspaceRoot: parsed.workspaceRoot ?? workspaceRootFor(path),
-        apiKeyPlain: parsed.apiKey,
-      };
-    }
-    return null;
   }
 
   async getPublic(): Promise<AppSettings | null> {
-    const s = await this.load();
-    if (!s) return null;
-    return {
-      providerName: s.providerName,
-      baseURL: s.baseURL,
-      model: s.model,
-      workspaceRoot: s.workspaceRoot,
-      permissions: s.permissions,
-      hasApiKey: Boolean(s.apiKeyEnc || s.apiKeyPlain),
-    };
-  }
-
-  /** The decrypted API key for use by the core (main process only). */
-  async getApiKey(): Promise<string | undefined> {
-    const s = await this.load();
-    if (!s) return undefined;
-    if (s.apiKeyEnc && safeStorage.isEncryptionAvailable()) {
-      return safeStorage.decryptString(Buffer.from(s.apiKeyEnc, "base64"));
-    }
-    return s.apiKeyPlain ?? (await this.loadFileConfig())?.apiKeyPlain;
+    if (this.cache !== undefined) return this.cache;
+    const stored = await this.readStored();
+    if (!stored?.workspaceRoot) return (this.cache = null);
+    return (this.cache = {
+      workspaceRoot: stored.workspaceRoot,
+      permissions: stored.permissions,
+      recentModels: stored.recentModels,
+    });
   }
 
   async save(input: AppSettingsInput): Promise<AppSettings> {
-    const prev = await this.load();
-    const next: StoredSettings = {
-      providerName: input.providerName,
-      baseURL: input.baseURL,
-      model: input.model,
+    const next: AppSettings = {
       workspaceRoot: input.workspaceRoot,
       permissions: input.permissions,
-      apiKeyEnc: this.cacheFromFileConfig ? undefined : prev?.apiKeyEnc,
-      apiKeyPlain: this.cacheFromFileConfig ? undefined : prev?.apiKeyPlain,
+      recentModels: input.recentModels?.slice(0, 8),
     };
-
-    // A provided key replaces the stored one; an empty string clears it.
-    if (input.apiKey !== undefined) {
-      delete next.apiKeyEnc;
-      delete next.apiKeyPlain;
-      if (input.apiKey !== "") {
-        if (safeStorage.isEncryptionAvailable()) {
-          next.apiKeyEnc = safeStorage.encryptString(input.apiKey).toString("base64");
-        } else {
-          next.apiKeyPlain = input.apiKey;
-        }
-      }
-    }
-
     await mkdir(app.getPath("userData"), { recursive: true });
     await writeFile(this.file, JSON.stringify(next, null, 2), "utf8");
     this.cache = next;
-    this.cacheFromFileConfig = false;
-    return (await this.getPublic())!;
+    return next;
+  }
+
+  async migrateProviderCredentials(registry: ProviderRegistry, auth: AuthStore): Promise<void> {
+    const stored = await this.readStored();
+    if (!stored?.baseURL) return;
+    let key = stored.apiKeyPlain;
+    if (stored.apiKeyEnc && safeStorage.isEncryptionAvailable()) {
+      try {
+        key = safeStorage.decryptString(Buffer.from(stored.apiKeyEnc, "base64"));
+      } catch {
+        return;
+      }
+    }
+
+    if (stored.baseURL.startsWith("https://api.openai.com")) {
+      this.legacyProviderID = "openai";
+      if (key) await auth.setKey("openai", key);
+    } else {
+      const id = slug(stored.providerName || "custom");
+      this.legacyProviderID = id;
+      await registry.addCustom({
+        id,
+        name: stored.providerName,
+        baseURL: stored.baseURL,
+        apiKey: key,
+        models: stored.model ? [stored.model] : undefined,
+      });
+    }
+    await this.save({
+      workspaceRoot: stored.workspaceRoot || app.getPath("home"),
+      permissions: stored.permissions,
+      recentModels: stored.model
+        ? [{ providerID: this.legacyProviderID, modelID: stored.model }]
+        : stored.recentModels,
+    });
   }
 }
 
-function normalize(s: StoredSettings): StoredSettings {
-  const next = { ...s, providerName: s.providerName || "openai-compatible" };
-  // Discard legacy PermissionPolicy shape ({ defaultDecision, tools }); the
-  // permissions field is now an opencode-style PermissionConfig.
-  if (
-    next.permissions &&
-    typeof next.permissions === "object" &&
-    "defaultDecision" in (next.permissions as Record<string, unknown>)
-  ) {
-    delete next.permissions;
-  }
-  return next;
-}
-
-function isConfigured(s: StoredSettings): boolean {
-  return Boolean(s.baseURL && s.model && s.workspaceRoot);
-}
-
-function workspaceRootFor(configPath: string): string {
-  return configPath === join(homedir(), ".config", "cozycode", "config.json")
-    ? homedir()
-    : dirname(configPath);
-}
-
-function walkUp(start: string): string[] {
-  const dirs: string[] = [];
-  let current = resolve(start);
-  const root = parse(current).root;
-  while (true) {
-    dirs.push(current);
-    if (current === root) return dirs;
-    current = dirname(current);
-  }
-}
-
-function unique(values: string[]): string[] {
-  return [...new Set(values)];
-}
-
-async function tryReadJson(path: string): Promise<FileConfig | null> {
-  try {
-    return JSON.parse(await readFile(path, "utf8")) as FileConfig;
-  } catch {
-    return null;
-  }
+function slug(value: string): string {
+  const result = value.toLowerCase().replace(/[^a-z0-9-_]+/g, "-").replace(/^-+|-+$/g, "");
+  return result || "custom";
 }

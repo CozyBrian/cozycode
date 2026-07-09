@@ -21,12 +21,20 @@ export const COMMAND_DEFS: CommandDef[] = [
     aliases: ["models"],
     category: "session",
     description: "Switch model",
-    args: [{ name: "id", description: "Model id to switch to" }],
+    args: [{ name: "id", description: "Model id or provider/model to switch to" }],
     run: (ctx, args) => {
       const id = args.trim();
       if (id && ctx.setModel) ctx.setModel(id);
       else ctx.openModelPicker();
     },
+  }),
+  defineCommand({
+    name: "provider",
+    title: "Connect provider",
+    aliases: ["providers", "connect", "auth"],
+    category: "session",
+    description: "Connect or manage model providers",
+    run: (ctx) => ctx.openProviderPicker(),
   }),
   defineCommand({
     name: "plan",

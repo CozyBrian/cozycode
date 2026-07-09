@@ -1,28 +1,31 @@
 import type {
   AgentMode,
+  CustomProviderInput,
+  ModelRef,
+  OAuthResult,
+  OAuthStart,
   PermissionConfig,
   PermissionReplyBody,
   SessionEvent,
+  ProviderList,
 } from "@cozycode/protocol";
 
-/** Persisted app settings. The API key is stored separately (encrypted). */
+export type {
+  CustomProviderInput,
+  ModelRef,
+  OAuthResult,
+  OAuthStart,
+  ProviderList,
+} from "@cozycode/protocol";
+
 export interface AppSettings {
-  providerName: string;
-  baseURL: string;
-  /** Default model for new sessions (each session stores its own thereafter). */
-  model: string;
-  /** Default workspace for new sessions. */
   workspaceRoot: string;
-  /** Optional permission-rule overrides, merged over the preset's ruleset. */
   permissions?: PermissionConfig;
-  /** True when an API key is stored (the key itself is never sent to the UI). */
-  hasApiKey: boolean;
+  /** MRU model refs, newest first. */
+  recentModels?: ModelRef[];
 }
 
-/** Settings payload the renderer sends when saving (may include a new key). */
-export interface AppSettingsInput extends Omit<AppSettings, "hasApiKey"> {
-  apiKey?: string;
-}
+export interface AppSettingsInput extends AppSettings {}
 
 /** Permission preset shown as a pill in the composer. */
 export type PermissionPreset = "full" | "ask" | "plan";
@@ -37,7 +40,7 @@ export interface SessionMeta {
   updatedAt: number;
   /** null → a standalone chat (grouped under "Chats"); set → grouped by project. */
   workspaceRoot: string | null;
-  model: string;
+  model: ModelRef;
   preset: PermissionPreset;
   /** Number of user turns. */
   messageCount: number;
@@ -87,8 +90,14 @@ export const IPC = {
   sessionsActivate: "sessions:activate",
   sessionsDelete: "sessions:delete",
   sessionsRename: "sessions:rename",
-  // models
-  modelsList: "models:list",
+  // providers
+  providersList: "providers:list",
+  providersConnectApi: "providers:connect-api",
+  providersAddCustom: "providers:add-custom",
+  providersDisconnect: "providers:disconnect",
+  providersOauthStart: "providers:oauth-start",
+  providersOauthWait: "providers:oauth-wait",
+  providersOauthCancel: "providers:oauth-cancel",
   // terminal
   termCreate: "term:create",
   termInput: "term:input",
@@ -97,6 +106,7 @@ export const IPC = {
   // main -> renderer (push)
   sessionEvent: "session:event",
   sessionsChanged: "sessions:changed",
+  providersChanged: "providers:changed",
   termData: "term:data",
   termExit: "term:exit",
 } as const;
@@ -111,7 +121,7 @@ export interface CozyApi {
   send(message: string): Promise<{ ok: boolean; error?: string }>;
   abort(): Promise<void>;
   setMode(mode: AgentMode): Promise<void>;
-  setModel(model: string): Promise<void>;
+  setModel(ref: ModelRef): Promise<void>;
   setPreset(preset: PermissionPreset): Promise<void>;
   replyPermission(body: PermissionReplyBody): Promise<void>;
 
@@ -123,8 +133,16 @@ export interface CozyApi {
   deleteSession(id: string): Promise<SessionSnapshot | null>;
   renameSession(id: string, title: string): Promise<void>;
 
-  // models
-  listModels(): Promise<string[]>;
+  providers: {
+    list(): Promise<ProviderList>;
+    connectApi(providerID: string, apiKey: string): Promise<ProviderList>;
+    addCustom(input: CustomProviderInput): Promise<ProviderList>;
+    disconnect(providerID: string): Promise<ProviderList>;
+    oauthStart(providerID: string, method: number): Promise<OAuthStart>;
+    oauthWait(providerID: string): Promise<OAuthResult>;
+    oauthCancel(providerID: string): Promise<void>;
+    onChanged(cb: (list: ProviderList) => void): () => void;
+  };
 
   // terminal
   term: {

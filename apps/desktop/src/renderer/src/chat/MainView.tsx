@@ -87,7 +87,7 @@ export function MainView() {
       <div className="flex h-full flex-col">
         <ChatHeader title={title} active={started} />
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6">
-          <div className="w-full max-w-[720px]">
+          <div className="w-full max-w-180">
             <h1 className="mb-7 text-center text-[28px] font-semibold tracking-tight text-foreground">
               What should we work on in {project}?
             </h1>
@@ -104,7 +104,7 @@ export function MainView() {
       <ChatHeader title={title} active={started} />
       <Transcript />
       <div className="px-6 pb-5">
-        <div className="mx-auto max-w-[760px]">
+        <div className="mx-auto max-w-190">
           <Composer />
         </div>
       </div>

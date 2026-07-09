@@ -4,6 +4,7 @@ import {
   matchPrefix,
   parseCommandInput,
   runCommandInput,
+  resolveModelRef,
   type CommandContext,
   type CommandDef,
 } from "@cozycode/commands";
@@ -51,8 +52,14 @@ export function Composer({ centered = false }: { centered?: boolean }) {
     return {
       setMode: (mode) => s.setMode(mode),
       newSession: () => void s.createSession(),
-      openModelPicker: () => s.openSettings(),
-      setModel: (id) => s.setModel(id),
+      openModelPicker: () => s.setModelPickerOpen(true),
+      openProviderPicker: () => s.openSettings("providers"),
+      setModel: (id) => {
+        if (!s.providers) return s.systemNote("Provider data is not loaded.", true);
+        const result = resolveModelRef(id, s.providers);
+        if ("error" in result) s.systemNote(result.error, true);
+        else s.setModel(result);
+      },
       showHelp: () => s.setHelpOpen(true),
       exit: () => window.close(),
       send: (text) => void s.send(text),
@@ -79,7 +86,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
   const placeholder = preset === "plan" ? "Research a plan (read-only)…" : "Do anything";
 
   return (
-    <div className={cn("relative w-full", centered && "mx-auto max-w-[720px]")}>
+    <div className={cn("relative w-full", centered && "mx-auto max-w-180")}>
       {showSuggestions && (
         <CommandSuggestions
           suggestions={suggestions}
@@ -100,7 +107,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
           placeholder={placeholder}
           rows={1}
           onChange={(e) => setInput(e.target.value)}
-          className="max-h-[220px] w-full resize-none bg-transparent px-1 text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground"
+          className="max-h-55 w-full resize-none bg-transparent px-1 text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground"
           onKeyDown={(e) => {
             if (showSuggestions) {
               if (e.key === "ArrowDown") {

@@ -2,8 +2,6 @@ import type { WebContents } from "electron";
 import { homedir } from "node:os";
 import {
   createSession,
-  fetchModels,
-  mergeModels,
   mergeRulesets,
   rulesetFromConfig,
   type Session,
@@ -11,12 +9,13 @@ import {
 import type {
   AgentMode,
   PermissionReplyBody,
-  ProviderConfig,
+  ModelRef,
   SessionConfig,
   SessionEvent,
 } from "@cozycode/protocol";
 import { IPC, type PermissionPreset, type SessionMeta, type SessionSnapshot } from "../shared/ipc.ts";
 import type { SettingsStore } from "./settings.ts";
+import type { ProviderBridge } from "./providers.ts";
 import { SessionStore } from "./session-store.ts";
 import { TerminalManager } from "./terminal-manager.ts";
 import { resolvePreset } from "./presets.ts";
@@ -32,32 +31,22 @@ export class SessionManager {
   private activeMeta: SessionMeta | null = null;
   /** Provider/workspace signature; a change forces a context-preserving rebuild. */
   private configKey = "";
-  private readonly store = new SessionStore();
+  private readonly store: SessionStore;
   readonly terminals: TerminalManager;
-  private modelCache: { at: number; baseURL: string; models: string[] } | null = null;
 
   constructor(
     private readonly web: WebContents,
     private readonly settings: SettingsStore,
+    private readonly providers: ProviderBridge,
   ) {
+    this.store = new SessionStore(settings.legacyProviderID);
     this.terminals = new TerminalManager(web);
   }
 
   // --- provider config ------------------------------------------------------
 
-  private async provider(): Promise<ProviderConfig> {
-    const s = await this.settings.getPublic();
-    if (!s) throw new Error("No settings configured yet.");
-    if (!s.baseURL) throw new Error("Provider baseURL is required.");
-    return {
-      name: s.providerName || "openai-compatible",
-      baseURL: s.baseURL,
-      apiKey: await this.settings.getApiKey(),
-    };
-  }
-
   private async buildConfig(meta: SessionMeta): Promise<SessionConfig> {
-    const provider = await this.provider();
+    const provider = await this.providers.providerConfig(meta.model.providerID);
     const settings = await this.settings.getPublic();
     const { mode, ruleset } = resolvePreset(meta.preset);
     // User config overrides are merged last so they win (last-match-wins).
@@ -66,7 +55,7 @@ export class SessionManager {
       : ruleset;
     return {
       provider,
-      model: meta.model,
+      model: meta.model.modelID,
       workspaceRoot: meta.workspaceRoot ?? homedir(),
       permissions,
       mode,
@@ -79,7 +68,7 @@ export class SessionManager {
     const meta = this.activeMeta;
     const config = await this.buildConfig(meta);
     const key = JSON.stringify({
-      provider: config.provider,
+      providerID: meta.model.providerID,
       workspaceRoot: config.workspaceRoot,
     });
     if (this.session && key === this.configKey) return this.session;
@@ -120,10 +109,15 @@ export class SessionManager {
 
   async create(opts: { workspaceRoot?: string | null }): Promise<SessionSnapshot> {
     const s = await this.settings.getPublic();
+    const providerList = await this.providers.list();
+    const model = providerList.defaultModel ?? s?.recentModels?.[0] ?? {
+      providerID: "openai",
+      modelID: "gpt-5.2",
+    };
     await this.teardownActive();
     const meta = await this.store.create({
       workspaceRoot: opts.workspaceRoot ?? s?.workspaceRoot ?? null,
-      model: s?.model ?? "",
+      model,
       preset: "ask",
       now: Date.now(),
     });
@@ -186,10 +180,12 @@ export class SessionManager {
     this.session?.setMode(mode);
   }
 
-  async setModel(model: string): Promise<void> {
+  async setModel(model: ModelRef): Promise<void> {
     if (!this.activeMeta) return;
+    const providerChanged = model.providerID !== this.activeMeta.model.providerID;
     this.activeMeta.model = model;
-    this.session?.setModel(model);
+    if (providerChanged) this.configKey = "";
+    else this.session?.setModel(model.modelID);
     await this.store.touch(this.activeMeta.id, { model });
     this.notifyChanged();
   }
@@ -204,24 +200,6 @@ export class SessionManager {
     }
     await this.store.touch(this.activeMeta.id, { preset });
     this.notifyChanged();
-  }
-
-  // --- model discovery ------------------------------------------------------
-
-  async listModels(): Promise<string[]> {
-    const provider = await this.provider().catch(() => null);
-    if (!provider) return this.activeMeta?.model ? [this.activeMeta.model] : [];
-    const now = Date.now();
-    if (
-      this.modelCache &&
-      this.modelCache.baseURL === provider.baseURL &&
-      now - this.modelCache.at < 5 * 60 * 1000
-    ) {
-      return mergeModels(this.activeMeta?.model ?? "", undefined, this.modelCache.models);
-    }
-    const fetched = await fetchModels(provider);
-    this.modelCache = { at: now, baseURL: provider.baseURL, models: fetched };
-    return mergeModels(this.activeMeta?.model ?? "", undefined, fetched);
   }
 
   // --- streaming + approvals ------------------------------------------------

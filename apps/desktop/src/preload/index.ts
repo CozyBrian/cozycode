@@ -1,5 +1,12 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import type { AgentMode, PermissionReplyBody, SessionEvent } from "@cozycode/protocol";
+import type {
+  AgentMode,
+  CustomProviderInput,
+  ModelRef,
+  PermissionReplyBody,
+  ProviderList,
+  SessionEvent,
+} from "@cozycode/protocol";
 import {
   IPC,
   type AppSettingsInput,
@@ -18,7 +25,7 @@ const api: CozyApi = {
   send: (message: string) => ipcRenderer.invoke(IPC.sessionSend, message),
   abort: () => ipcRenderer.invoke(IPC.sessionAbort),
   setMode: (mode: AgentMode) => ipcRenderer.invoke(IPC.sessionSetMode, mode),
-  setModel: (model: string) => ipcRenderer.invoke(IPC.sessionSetModel, model),
+  setModel: (ref: ModelRef) => ipcRenderer.invoke(IPC.sessionSetModel, ref),
   setPreset: (preset: PermissionPreset) => ipcRenderer.invoke(IPC.sessionSetPreset, preset),
   replyPermission: (body: PermissionReplyBody) => ipcRenderer.invoke(IPC.permissionReply, body),
 
@@ -29,7 +36,25 @@ const api: CozyApi = {
   renameSession: (id: string, title: string) =>
     ipcRenderer.invoke(IPC.sessionsRename, { id, title }),
 
-  listModels: () => ipcRenderer.invoke(IPC.modelsList),
+  providers: {
+    list: () => ipcRenderer.invoke(IPC.providersList),
+    connectApi: (providerID: string, apiKey: string) =>
+      ipcRenderer.invoke(IPC.providersConnectApi, { providerID, apiKey }),
+    addCustom: (input: CustomProviderInput) =>
+      ipcRenderer.invoke(IPC.providersAddCustom, input),
+    disconnect: (providerID: string) =>
+      ipcRenderer.invoke(IPC.providersDisconnect, providerID),
+    oauthStart: (providerID: string, method: number) =>
+      ipcRenderer.invoke(IPC.providersOauthStart, { providerID, method }),
+    oauthWait: (providerID: string) => ipcRenderer.invoke(IPC.providersOauthWait, providerID),
+    oauthCancel: (providerID: string) =>
+      ipcRenderer.invoke(IPC.providersOauthCancel, providerID),
+    onChanged(cb: (list: ProviderList) => void) {
+      const listener = (_e: IpcRendererEvent, list: ProviderList) => cb(list);
+      ipcRenderer.on(IPC.providersChanged, listener);
+      return () => ipcRenderer.off(IPC.providersChanged, listener);
+    },
+  },
 
   term: {
     create: (opts) => ipcRenderer.invoke(IPC.termCreate, opts),

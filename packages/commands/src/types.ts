@@ -12,7 +12,9 @@ export interface CommandContext {
   newSession(): void;
   /** Open the model-picker UI. */
   openModelPicker(): void;
-  /** Directly switch to a model by id (used when `/model <id>` is given). */
+  /** Open the provider-connection UI. */
+  openProviderPicker(): void;
+  /** Directly switch to a model by id or provider/model reference. */
   setModel?(id: string): void;
   /** Show the help / keybindings UI. */
   showHelp(): void;

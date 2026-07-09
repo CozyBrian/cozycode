@@ -4,7 +4,7 @@ import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir, readFile, writeFile, rename, rm, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { ModelMessage } from "@cozycode/core";
-import type { SessionEvent } from "@cozycode/protocol";
+import type { ModelRef, SessionEvent } from "@cozycode/protocol";
 import type {
   PermissionPreset,
   SessionMeta,
@@ -43,6 +43,8 @@ export class SessionStore {
   private readonly streams = new Map<string, WriteStream>();
   private readonly deltaBuffers = new Map<string, string>();
 
+  constructor(private readonly legacyProviderID = "openai") {}
+
   private indexPath(): string {
     return join(this.dir, "index.json");
   }
@@ -61,8 +63,18 @@ export class SessionStore {
     if (this.index) return this.index;
     try {
       const raw = await readFile(this.indexPath(), "utf8");
-      const parsed = JSON.parse(raw) as IndexFile;
+      const parsed = JSON.parse(raw) as IndexFile & {
+        sessions?: Array<Omit<SessionMeta, "model"> & { model: ModelRef | string }>;
+      };
+      let migrated = false;
+      for (const session of parsed.sessions ?? []) {
+        if (typeof session.model === "string") {
+          session.model = { providerID: this.legacyProviderID, modelID: session.model };
+          migrated = true;
+        }
+      }
       this.index = parsed?.sessions ? parsed : { version: 1, sessions: [] };
+      if (migrated) await this.persistIndex();
     } catch {
       this.index = { version: 1, sessions: [] };
     }
@@ -93,7 +105,7 @@ export class SessionStore {
 
   async create(opts: {
     workspaceRoot: string | null;
-    model: string;
+    model: ModelRef;
     preset: PermissionPreset;
     now: number;
     title?: string;
