@@ -5,6 +5,7 @@ export { Session, type SessionOptions } from "./session.ts";
 export { PermissionGate } from "./permissions.ts";
 export { AsyncEventQueue } from "./events.ts";
 export { createModel } from "./model.ts";
+export { fetchModels, mergeModels } from "./models.ts";
 export { buildTools, TOOL_DEFS } from "./tools/index.ts";
 export { resolveInWorkspace } from "./tools/paths.ts";
 export {
@@ -17,6 +18,8 @@ export {
 } from "./config.ts";
 export { MUTATING_TOOLS } from "./tools/index.ts";
 export type { ToolDef, ToolContext } from "./tools/types.ts";
+/** Re-exported so frontends can type persisted history without depending on `ai`. */
+export type { ModelMessage } from "ai";
 
 /** Create a new agent session. `approvalHandler` answers `ask` decisions. */
 export function createSession(

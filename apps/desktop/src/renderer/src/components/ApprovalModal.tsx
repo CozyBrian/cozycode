@@ -1,4 +1,12 @@
 import type { ApprovalOutcome, ApprovalRequest } from "@cozycode/protocol";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 
 interface Props {
   request: ApprovalRequest;
@@ -7,24 +15,27 @@ interface Props {
 
 export function ApprovalModal({ request, onRespond }: Props) {
   return (
-    <div className="modal-backdrop">
-      <div className="modal">
-        <h3>Approve action?</h3>
-        <p className="tool-name">{request.toolName}</p>
-        <p className="summary">{request.summary}</p>
-        <pre className="args">{JSON.stringify(request.args, null, 2)}</pre>
-        <div className="row end">
-          <button type="button" onClick={() => onRespond("deny")}>
+    <Dialog open onOpenChange={(next) => !next && onRespond("deny")}>
+      <DialogContent showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>Approve action?</DialogTitle>
+          <DialogDescription>
+            <span className="font-mono text-primary">{request.toolName}</span> — {request.summary}
+          </DialogDescription>
+        </DialogHeader>
+        <pre className="selectable max-h-64 overflow-auto rounded-lg border border-border bg-card/60 p-3 font-mono text-xs text-muted-foreground">
+          {JSON.stringify(request.args, null, 2)}
+        </pre>
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={() => onRespond("deny")}>
             Deny
-          </button>
-          <button type="button" onClick={() => onRespond("allow-session")}>
+          </Button>
+          <Button variant="outline" onClick={() => onRespond("allow-session")}>
             Always allow
-          </button>
-          <button type="button" className="primary" onClick={() => onRespond("allow-once")}>
-            Allow once
-          </button>
+          </Button>
+          <Button onClick={() => onRespond("allow-once")}>Allow once</Button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

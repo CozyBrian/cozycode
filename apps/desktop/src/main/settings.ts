@@ -1,6 +1,7 @@
 import { app, safeStorage } from "electron";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join, parse, resolve } from "node:path";
+import { homedir } from "node:os";
 import type { AppSettings, AppSettingsInput } from "../shared/ipc.ts";
 
 interface StoredSettings {
@@ -14,6 +15,15 @@ interface StoredSettings {
   apiKeyPlain?: string;
 }
 
+interface FileConfig {
+  provider?: string;
+  providerName?: string;
+  baseURL?: string;
+  apiKey?: string;
+  model?: string;
+  workspaceRoot?: string;
+}
+
 /**
  * Settings persistence. The API key is encrypted with the OS keychain via
  * Electron's safeStorage when available, and never handed back to the renderer
@@ -22,15 +32,44 @@ interface StoredSettings {
 export class SettingsStore {
   private readonly file = join(app.getPath("userData"), "cozycode-settings.json");
   private cache: StoredSettings | null = null;
+  private cacheFromFileConfig = false;
 
   private async load(): Promise<StoredSettings | null> {
     if (this.cache) return this.cache;
     try {
-      this.cache = JSON.parse(await readFile(this.file, "utf8")) as StoredSettings;
-      return this.cache;
+      const stored = JSON.parse(await readFile(this.file, "utf8")) as StoredSettings;
+      if (isConfigured(stored)) {
+        this.cache = normalize(stored);
+        this.cacheFromFileConfig = false;
+        return this.cache;
+      }
     } catch {
-      return null;
+      // Fall through to shared JSON config resolution.
     }
+    this.cache = await this.loadFileConfig();
+    this.cacheFromFileConfig = Boolean(this.cache);
+    return this.cache;
+  }
+
+  private async loadFileConfig(): Promise<StoredSettings | null> {
+    const candidates = unique([
+      ...walkUp(process.cwd()).map((dir) => join(dir, "cozycode.json")),
+      ...walkUp(app.getAppPath()).map((dir) => join(dir, "cozycode.json")),
+      join(homedir(), ".config", "cozycode", "config.json"),
+    ]);
+
+    for (const path of candidates) {
+      const parsed = await tryReadJson(path);
+      if (!parsed?.baseURL || !parsed.model) continue;
+      return {
+        providerName: parsed.providerName ?? parsed.provider ?? "openai-compatible",
+        baseURL: parsed.baseURL,
+        model: parsed.model,
+        workspaceRoot: parsed.workspaceRoot ?? workspaceRootFor(path),
+        apiKeyPlain: parsed.apiKey,
+      };
+    }
+    return null;
   }
 
   async getPublic(): Promise<AppSettings | null> {
@@ -53,7 +92,7 @@ export class SettingsStore {
     if (s.apiKeyEnc && safeStorage.isEncryptionAvailable()) {
       return safeStorage.decryptString(Buffer.from(s.apiKeyEnc, "base64"));
     }
-    return s.apiKeyPlain;
+    return s.apiKeyPlain ?? (await this.loadFileConfig())?.apiKeyPlain;
   }
 
   async save(input: AppSettingsInput): Promise<AppSettings> {
@@ -64,8 +103,8 @@ export class SettingsStore {
       model: input.model,
       workspaceRoot: input.workspaceRoot,
       permissions: input.permissions,
-      apiKeyEnc: prev?.apiKeyEnc,
-      apiKeyPlain: prev?.apiKeyPlain,
+      apiKeyEnc: this.cacheFromFileConfig ? undefined : prev?.apiKeyEnc,
+      apiKeyPlain: this.cacheFromFileConfig ? undefined : prev?.apiKeyPlain,
     };
 
     // A provided key replaces the stored one; an empty string clears it.
@@ -84,6 +123,44 @@ export class SettingsStore {
     await mkdir(app.getPath("userData"), { recursive: true });
     await writeFile(this.file, JSON.stringify(next, null, 2), "utf8");
     this.cache = next;
+    this.cacheFromFileConfig = false;
     return (await this.getPublic())!;
+  }
+}
+
+function normalize(s: StoredSettings): StoredSettings {
+  return { ...s, providerName: s.providerName || "openai-compatible" };
+}
+
+function isConfigured(s: StoredSettings): boolean {
+  return Boolean(s.baseURL && s.model && s.workspaceRoot);
+}
+
+function workspaceRootFor(configPath: string): string {
+  return configPath === join(homedir(), ".config", "cozycode", "config.json")
+    ? homedir()
+    : dirname(configPath);
+}
+
+function walkUp(start: string): string[] {
+  const dirs: string[] = [];
+  let current = resolve(start);
+  const root = parse(current).root;
+  while (true) {
+    dirs.push(current);
+    if (current === root) return dirs;
+    current = dirname(current);
+  }
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+async function tryReadJson(path: string): Promise<FileConfig | null> {
+  try {
+    return JSON.parse(await readFile(path, "utf8")) as FileConfig;
+  } catch {
+    return null;
   }
 }

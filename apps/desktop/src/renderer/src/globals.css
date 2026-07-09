@@ -1,110 +1,56 @@
 @import "tailwindcss";
+@import "@cozycode/design-system/theme.css";
 @import "tw-animate-css";
 
-@custom-variant dark (&:is(.dark *));
-
-/* shadcn/ui — new-york style, zinc base color (oklch tokens). */
+/*
+ * cozycode desktop — dark-only theme.
+ *
+ * The window is a translucent macOS vibrancy surface (see main/index.ts), so
+ * the outermost elements stay transparent and let the native blur show through.
+ * shadcn semantic tokens are re-pointed at the `cozy-*` brand scale so accents
+ * flow through every primitive; neutral surfaces derive from
+ * --color-cozy-background for a cohesive blue-tinted graphite.
+ */
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.141 0.005 285.823);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.141 0.005 285.823);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.141 0.005 285.823);
-  --primary: oklch(0.21 0.006 285.885);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.967 0.001 286.375);
-  --secondary-foreground: oklch(0.21 0.006 285.885);
-  --muted: oklch(0.967 0.001 286.375);
-  --muted-foreground: oklch(0.552 0.016 285.938);
-  --accent: oklch(0.967 0.001 286.375);
-  --accent-foreground: oklch(0.21 0.006 285.885);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.92 0.004 286.32);
-  --input: oklch(0.92 0.004 286.32);
-  --ring: oklch(0.705 0.015 286.067);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.141 0.005 285.823);
-  --sidebar-primary: oklch(0.21 0.006 285.885);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.967 0.001 286.375);
-  --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
-  --sidebar-border: oklch(0.92 0.004 286.32);
-  --sidebar-ring: oklch(0.705 0.015 286.067);
-}
+  --radius: 0.75rem;
 
-/* Dark token set. Applied via an explicit `.dark` class (for the future theme
-   toggle) and via the system preference below (the app has no toggle yet). */
-.dark,
-:root:where(.dark) {
-  --background: oklch(0.141 0.005 285.823);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.21 0.006 285.885);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.21 0.006 285.885);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.92 0.004 286.32);
-  --primary-foreground: oklch(0.21 0.006 285.885);
-  --secondary: oklch(0.274 0.006 286.033);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.274 0.006 286.033);
-  --muted-foreground: oklch(0.705 0.015 286.067);
-  --accent: oklch(0.274 0.006 286.033);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.552 0.016 285.938);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.21 0.006 285.885);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.274 0.006 286.033);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.552 0.016 285.938);
-}
+  --background: var(--color-cozy-background);
+  --foreground: oklch(0.96 0.005 250);
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: oklch(0.141 0.005 285.823);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.21 0.006 285.885);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.21 0.006 285.885);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.92 0.004 286.32);
-    --primary-foreground: oklch(0.21 0.006 285.885);
-    --secondary: oklch(0.274 0.006 286.033);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.274 0.006 286.033);
-    --muted-foreground: oklch(0.705 0.015 286.067);
-    --accent: oklch(0.274 0.006 286.033);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.552 0.016 285.938);
-    --sidebar: oklch(0.21 0.006 285.885);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.274 0.006 286.033);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.552 0.016 285.938);
-  }
+  --card: oklch(from var(--color-cozy-background) calc(l + 0.05) c h);
+  --card-foreground: oklch(0.96 0.005 250);
+  --popover: oklch(from var(--color-cozy-background) calc(l + 0.06) c h);
+  --popover-foreground: oklch(0.96 0.005 250);
+
+  --primary: var(--color-cozy-500);
+  --primary-foreground: var(--color-cozy-50);
+  --secondary: oklch(from var(--color-cozy-background) calc(l + 0.08) c h);
+  --secondary-foreground: oklch(0.96 0.005 250);
+  --muted: oklch(from var(--color-cozy-background) calc(l + 0.06) c h);
+  --muted-foreground: oklch(0.68 0.02 250);
+  --accent: oklch(from var(--color-cozy-background) calc(l + 0.09) c h);
+  --accent-foreground: var(--color-cozy-200);
+
+  --destructive: oklch(0.62 0.2 25);
+  --warning: oklch(0.72 0.16 55);
+
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 12%);
+  --ring: var(--color-cozy-400);
+
+  /* Translucent, vibrancy-aware surfaces layered over the native blur. */
+  --surface-sidebar: oklch(from var(--color-cozy-background) l c h / 0.52);
+  --surface-content: oklch(from var(--color-cozy-background) calc(l + 0.04) c h / 0.72);
+  --surface-raised: oklch(from var(--color-cozy-background) calc(l + 0.10) c h / 0.9);
+
+  --sidebar: var(--surface-sidebar);
+  --sidebar-foreground: oklch(0.9 0.008 250);
+  --sidebar-primary: var(--color-cozy-500);
+  --sidebar-primary-foreground: var(--color-cozy-50);
+  --sidebar-accent: oklch(1 0 0 / 6%);
+  --sidebar-accent-foreground: oklch(0.96 0.005 250);
+  --sidebar-border: oklch(1 0 0 / 8%);
+  --sidebar-ring: var(--color-cozy-400);
 }
 
 @theme inline {
@@ -112,6 +58,7 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 12px);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -127,14 +74,13 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
+  --color-warning: var(--warning);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --color-chart-1: var(--chart-1);
-  --color-chart-2: var(--chart-2);
-  --color-chart-3: var(--chart-3);
-  --color-chart-4: var(--chart-4);
-  --color-chart-5: var(--chart-5);
+  --color-surface-sidebar: var(--surface-sidebar);
+  --color-surface-content: var(--surface-content);
+  --color-surface-raised: var(--surface-raised);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -143,6 +89,8 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
+    system-ui, sans-serif;
 }
 
 @layer base {
@@ -150,12 +98,51 @@
     @apply border-border outline-ring/50;
   }
   /* Keep the outermost surfaces transparent so the macOS vibrancy layer shows
-     through. Components (cards, popovers, dialogs) still paint their own
-     bg-* tokens. NOTE: we deliberately do NOT `@apply bg-background` on body. */
+     through. Components paint their own bg-* tokens on top. */
   html,
   body,
   #root {
     background: transparent;
-    @apply text-foreground;
+    @apply text-foreground antialiased;
+    font-family: var(--font-sans);
   }
+  #root {
+    height: 100vh;
+    overflow: hidden;
+  }
+  /* Chrome (titlebar, sidebar, rail) is non-selectable; transcript opts back in. */
+  body {
+    user-select: none;
+  }
+}
+
+@layer utilities {
+  .app-drag {
+    -webkit-app-region: drag;
+  }
+  .app-no-drag {
+    -webkit-app-region: no-drag;
+  }
+  .selectable {
+    user-select: text;
+  }
+}
+
+/* Slim, unobtrusive scrollbars matching the dark surface. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: oklch(1 0 0 / 12%);
+  border-radius: 8px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(1 0 0 / 20%);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
 }

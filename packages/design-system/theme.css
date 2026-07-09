@@ -1,0 +1,20 @@
+/* packages/design-system/theme.css
+ *
+ * The cozy brand palette, shared across cozycode frontends. Importing this
+ * after `tailwindcss` registers `cozy-*` color utilities (bg-cozy-500,
+ * text-cozy-300, border-cozy-700, …) via Tailwind v4's `@theme`.
+ */
+@theme {
+  --color-cozy-50: oklch(97.26% 0.0086 264.52);
+  --color-cozy-100: oklch(94.60% 0.0160 253.90);
+  --color-cozy-200: oklch(88.34% 0.0344 249.59);
+  --color-cozy-300: oklch(78.18% 0.0658 249.38);
+  --color-cozy-400: oklch(66.64% 0.1002 248.70);
+  --color-cozy-500: oklch(57.35% 0.1160 250.22);
+  --color-cozy-600: oklch(52.11% 0.1199 252.99);
+  --color-cozy-700: oklch(41.98% 0.0942 254.34);
+  --color-cozy-800: oklch(38.05% 0.0766 252.73);
+  --color-cozy-900: oklch(34.40% 0.0630 254.59);
+  --color-cozy-950: oklch(26.29% 0.0464 257.85);
+  --color-cozy-background: oklch(16.54% 0.0203 251.89);
+}

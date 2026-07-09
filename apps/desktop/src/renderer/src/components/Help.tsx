@@ -12,6 +12,10 @@ const KEYS: [string, string][] = [
   ["Enter", "send message"],
   ["Shift+Enter", "newline"],
   ["Tab", "toggle plan / build"],
+  ["⌘B", "toggle sidebar"],
+  ["⌘J", "toggle terminal"],
+  ["⌘N", "new chat"],
+  ["⌘,", "open settings"],
 ];
 
 const COMMANDS: [string, string][] = listCommands().map((command) => [

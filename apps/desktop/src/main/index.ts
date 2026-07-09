@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog } from "electron";
 import { join } from "node:path";
 import type { AgentMode, ApprovalOutcome } from "@cozycode/protocol";
-import { IPC, type AppSettingsInput } from "../shared/ipc.ts";
+import { IPC, type AppSettingsInput, type PermissionPreset } from "../shared/ipc.ts";
 import { SettingsStore } from "./settings.ts";
 import { SessionManager } from "./session-manager.ts";
 
@@ -27,7 +27,7 @@ function createWindow(): void {
           visualEffectState: "active" as const,
           backgroundColor: "#00000000",
         }
-      : { backgroundColor: "#16181d" }),
+      : { backgroundColor: "#15171d" }),
     webPreferences: {
       preload: join(import.meta.dirname, "../preload/index.mjs"),
       sandbox: false,
@@ -38,7 +38,7 @@ function createWindow(): void {
 
   win.on("ready-to-show", () => win.show());
   win.on("closed", () => {
-    manager?.dispose();
+    void manager?.dispose();
     manager = null;
   });
 
@@ -60,18 +60,50 @@ function registerIpc(): void {
     return result.canceled ? null : (result.filePaths[0] ?? null);
   });
 
+  // active-session actions
   ipcMain.handle(IPC.sessionSend, (_e, message: string) => {
     if (!manager) return { ok: false, error: "No active window." };
     return manager.send(message);
   });
   ipcMain.handle(IPC.sessionAbort, () => manager?.abort());
-  ipcMain.handle(IPC.sessionReset, () => manager?.reset());
   ipcMain.handle(IPC.sessionSetMode, (_e, mode: AgentMode) => manager?.setMode(mode));
+  ipcMain.handle(IPC.sessionSetModel, (_e, model: string) => manager?.setModel(model));
+  ipcMain.handle(IPC.sessionSetPreset, (_e, preset: PermissionPreset) =>
+    manager?.setPreset(preset),
+  );
   ipcMain.handle(
     IPC.approvalRespond,
     (_e, payload: { requestId: string; outcome: ApprovalOutcome }) =>
       manager?.resolveApproval(payload.requestId, payload.outcome),
   );
+
+  // session management
+  ipcMain.handle(IPC.sessionsList, () => manager?.list() ?? []);
+  ipcMain.handle(IPC.sessionsCreate, (_e, opts: { workspaceRoot?: string | null }) =>
+    manager?.create(opts ?? {}),
+  );
+  ipcMain.handle(IPC.sessionsActivate, (_e, id: string) => manager?.activate(id));
+  ipcMain.handle(IPC.sessionsDelete, (_e, id: string) => manager?.remove(id) ?? null);
+  ipcMain.handle(IPC.sessionsRename, (_e, payload: { id: string; title: string }) =>
+    manager?.rename(payload.id, payload.title),
+  );
+
+  // models
+  ipcMain.handle(IPC.modelsList, () => manager?.listModels() ?? []);
+
+  // terminal
+  ipcMain.handle(IPC.termCreate, (_e, opts: { cols: number; rows: number }) =>
+    manager?.terminals.create(opts),
+  );
+  ipcMain.handle(IPC.termInput, (_e, payload: { termId: string; data: string }) =>
+    manager?.terminals.write(payload.termId, payload.data),
+  );
+  ipcMain.handle(
+    IPC.termResize,
+    (_e, payload: { termId: string; cols: number; rows: number }) =>
+      manager?.terminals.resize(payload.termId, payload.cols, payload.rows),
+  );
+  ipcMain.handle(IPC.termKill, (_e, termId: string) => manager?.terminals.kill(termId));
 }
 
 app.whenReady().then(() => {

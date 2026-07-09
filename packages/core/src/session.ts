@@ -3,6 +3,7 @@ import { ToolLoopAgent, isStepCount, type LanguageModel, type ModelMessage } fro
 import type {
   AgentMode,
   ApprovalHandler,
+  PermissionPolicy,
   SessionConfig,
   SessionEvent,
   TokenUsage,
@@ -21,6 +22,10 @@ import {
 export interface SessionOptions {
   /** Inject a pre-built language model, bypassing provider-config construction. */
   model?: LanguageModel;
+  /** Stable session id (e.g. restored from disk); defaults to a fresh UUID. */
+  id?: string;
+  /** Seed the conversation history so context carries across a resume/rebuild. */
+  initialHistory?: ModelMessage[];
 }
 
 /**
@@ -30,7 +35,7 @@ export interface SessionOptions {
  * and emits into that stream.
  */
 export class Session {
-  readonly id = randomUUID();
+  readonly id: string;
   readonly events = new AsyncEventQueue<SessionEvent>();
 
   private readonly history: ModelMessage[] = [];
@@ -52,6 +57,8 @@ export class Session {
     approvalHandler: ApprovalHandler,
     options: SessionOptions = {},
   ) {
+    this.id = options.id ?? randomUUID();
+    if (options.initialHistory?.length) this.history.push(...options.initialHistory);
     const initialMode = config.mode ?? "build";
     this.currentMode = initialMode;
     this.gate = new PermissionGate(config.permissions, approvalHandler, initialMode);
@@ -75,6 +82,19 @@ export class Session {
   /** The agent mode currently in effect. */
   get mode(): AgentMode {
     return this.currentMode;
+  }
+
+  /**
+   * A deep copy of the conversation history, suitable for persisting and later
+   * seeding a new session via `SessionOptions.initialHistory`.
+   */
+  snapshotHistory(): ModelMessage[] {
+    return structuredClone(this.history);
+  }
+
+  /** Replace the permission policy live (e.g. switching a permission preset). */
+  setPermissions(policy: PermissionPolicy): void {
+    this.gate.setPolicy(policy);
   }
 
   /**
