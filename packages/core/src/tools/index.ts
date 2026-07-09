@@ -23,7 +23,7 @@ export const TOOL_DEFS: AnyToolDef[] = [
   searchTool,
 ];
 
-/** Tools that mutate the workspace and are hard-denied in plan mode. */
+/** File-mutating tools that are hard-denied in plan mode. */
 export const MUTATING_TOOLS: ReadonlySet<string> = new Set([
   "write_file",
   "edit_file",
@@ -48,7 +48,7 @@ export function buildTools({ ctx, gate, emit }: BuildToolsOptions): ToolSet {
       inputSchema: def.inputSchema,
       execute: async (rawArgs: unknown, options: { toolCallId: string; abortSignal?: AbortSignal }) => {
         const args = def.inputSchema.parse(rawArgs);
-        const { allowed, decision } = await gate.authorize({
+        const { allowed, decision, message } = await gate.authorize({
           toolCallId: options.toolCallId,
           toolName: def.name,
           args,
@@ -65,7 +65,7 @@ export function buildTools({ ctx, gate, emit }: BuildToolsOptions): ToolSet {
         if (!allowed) {
           return {
             denied: true,
-            message: `Permission denied: the user did not approve "${def.name}".`,
+            message: message ?? `Permission denied: the user did not approve "${def.name}".`,
           };
         }
 

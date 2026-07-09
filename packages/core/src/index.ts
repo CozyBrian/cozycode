@@ -10,9 +10,9 @@ export { resolveInWorkspace } from "./tools/paths.ts";
 export {
   DEFAULT_PERMISSION_POLICY,
   DEFAULT_SYSTEM_PROMPT,
-  PLAN_MODE_PROMPT_ADDENDUM,
-  BUILD_AFTER_PLAN_PROMPT,
-  PLAN_FILE_DIR,
+  PLAN_MODE_REMINDER,
+  BUILD_SWITCH_REMINDER,
+  PLAN_MODE_DENIAL_MESSAGE,
   DEFAULT_MAX_STEPS,
 } from "./config.ts";
 export { MUTATING_TOOLS } from "./tools/index.ts";

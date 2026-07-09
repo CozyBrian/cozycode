@@ -7,6 +7,7 @@ import type {
 } from "@cozycode/protocol";
 import { classifyCommand } from "./tools/shell-safety.ts";
 import { MUTATING_TOOLS } from "./tools/index.ts";
+import { PLAN_MODE_DENIAL_MESSAGE } from "./config.ts";
 
 export interface AuthorizeInput {
   toolCallId: string;
@@ -20,6 +21,8 @@ export interface AuthorizeResult {
   allowed: boolean;
   /** The policy decision before the approval round-trip resolved it. */
   decision: PermissionDecision;
+  /** Optional denial message to return to the model. */
+  message?: string;
 }
 
 /**
@@ -29,6 +32,9 @@ export interface AuthorizeResult {
  *   - `deny`  -> blocked, the model gets a denial result
  *   - `ask`   -> the frontend's `ApprovalHandler` decides; "allow-session"
  *                remembers the grant for the rest of the session.
+ *
+ * Plan mode hard-denies file mutating tools (`write_file`, `edit_file`) while
+ * leaving read-only tools and shell authorization on the normal policy path.
  *
  * For `run_shell` with an `ask` policy, commands are classified:
  *   - `safe`        -> auto-allowed without prompting
@@ -40,10 +46,9 @@ export interface AuthorizeResult {
 export class PermissionGate {
   private readonly sessionGrants = new Set<string>();
   private mode: AgentMode;
-  private planFilePath: string | null = null;
 
   constructor(
-    private readonly policy: PermissionPolicy,
+    private policy: PermissionPolicy,
     private readonly onApproval: ApprovalHandler,
     mode: AgentMode = "build",
   ) {
@@ -55,18 +60,14 @@ export class PermissionGate {
     return this.mode;
   }
 
-  /** The workspace-relative plan file path, if one is set for plan mode. */
-  getPlanFilePath(): string | null {
-    return this.planFilePath;
-  }
-
   /**
-   * Set the workspace-relative plan file path. In plan mode writes and edits
-   * targeting this file are exempted from the normal read-only enforcement so
-   * the agent can produce a concrete implementation plan.
+   * Replace the active policy live (e.g. switching a permission preset).
+   * Session grants are cleared so a tightened policy takes effect immediately
+   * rather than being shadowed by an earlier "allow-session".
    */
-  setPlanFile(path: string | null): void {
-    this.planFilePath = path;
+  setPolicy(policy: PermissionPolicy): void {
+    this.policy = policy;
+    this.sessionGrants.clear();
   }
 
   /** Switch the mode live. Session grants are cleared when entering plan mode. */
@@ -83,25 +84,12 @@ export class PermissionGate {
   }
 
   async authorize(input: AuthorizeInput): Promise<AuthorizeResult> {
-    // Plan mode: hard read-only enforcement. Mutating tools are denied
-    // outright — except for writes/edits targeting the plan file. Shell
-    // commands are allowed only when classified as safe.
-    if (this.mode === "plan") {
-      if (MUTATING_TOOLS.has(input.toolName) && !this.isPlanFileTarget(input)) {
-        return { allowed: false, decision: "deny" };
-      }
-      if (input.toolName === "run_shell") {
-        const command =
-          typeof input.args === "object" &&
-          input.args !== null &&
-          "command" in input.args
-            ? String((input.args as { command?: string }).command ?? "")
-            : "";
-        const classification = classifyCommand(command);
-        return classification === "safe"
-          ? { allowed: true, decision: "allow" }
-          : { allowed: false, decision: "deny" };
-      }
+    if (this.mode === "plan" && MUTATING_TOOLS.has(input.toolName)) {
+      return {
+        allowed: false,
+        decision: "deny",
+        message: PLAN_MODE_DENIAL_MESSAGE,
+      };
     }
 
     const decision = this.resolve(input.toolName);
@@ -150,19 +138,4 @@ export class PermissionGate {
     return { allowed: false, decision };
   }
 
-  /**
-   * Returns true when the tool call targets the plan file (the one file
-   * the agent is allowed to mutate in plan mode).
-   */
-  private isPlanFileTarget(input: AuthorizeInput): boolean {
-    if (!this.planFilePath) return false;
-    if (
-      typeof input.args === "object" &&
-      input.args !== null &&
-      "path" in input.args
-    ) {
-      return String(input.args.path) === this.planFilePath;
-    }
-    return false;
-  }
 }

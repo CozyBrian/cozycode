@@ -11,7 +11,12 @@ import type {
   SessionConfig,
   SessionEvent,
 } from "@cozycode/protocol";
-import { createSession } from "../src/index.ts";
+import {
+  BUILD_SWITCH_REMINDER,
+  PLAN_MODE_DENIAL_MESSAGE,
+  PLAN_MODE_REMINDER,
+  createSession,
+} from "../src/index.ts";
 
 /**
  * End-to-end coverage of the Session pipeline (model -> tool loop -> permission
@@ -49,6 +54,82 @@ function twoStepWriteModel(content: string) {
       ]),
     ],
   });
+}
+
+function twoStepShellModel(command: string) {
+  return new MockLanguageModelV4({
+    doStream: [
+      step([
+        { type: "stream-start", warnings: [] },
+        {
+          type: "tool-call",
+          toolCallId: "call-1",
+          toolName: "run_shell",
+          input: JSON.stringify({ command }),
+        },
+        { type: "finish", finishReason: "tool-calls", usage },
+      ]),
+      step([
+        { type: "stream-start", warnings: [] },
+        { type: "text-start", id: "t1" },
+        { type: "text-delta", id: "t1", delta: "Done." },
+        { type: "text-end", id: "t1" },
+        { type: "finish", finishReason: "stop", usage },
+      ]),
+    ],
+  });
+}
+
+function capturePromptModel(prompts: unknown[]) {
+  return new MockLanguageModelV4({
+    doStream: async (options) => {
+      prompts.push(options.prompt);
+      return step([
+        { type: "stream-start", warnings: [] },
+        { type: "text-start", id: "t1" },
+        { type: "text-delta", id: "t1", delta: "ok" },
+        { type: "text-end", id: "t1" },
+        { type: "finish", finishReason: "stop", usage },
+      ]);
+    },
+  });
+}
+
+function promptText(prompts: unknown[], index = prompts.length - 1): string {
+  return collectStrings(prompts[index]);
+}
+
+function latestUserText(prompts: unknown[], index = prompts.length - 1): string {
+  const prompt = prompts[index];
+  if (!Array.isArray(prompt)) return promptText(prompts, index);
+  const userMessages = prompt.filter(
+    (message): message is { role: string; content: unknown } =>
+      typeof message === "object" &&
+      message !== null &&
+      "role" in message &&
+      message.role === "user" &&
+      "content" in message,
+  );
+  return collectStrings(userMessages.at(-1)?.content);
+}
+
+function collectStrings(value: unknown): string {
+  const strings: string[] = [];
+  const visit = (value: unknown) => {
+    if (typeof value === "string") {
+      strings.push(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    if (value && typeof value === "object") {
+      for (const item of Object.values(value)) visit(item);
+    }
+  };
+  visit(value);
+  return strings.join("\n");
 }
 
 let root: string;
@@ -159,6 +240,11 @@ describe("Session (integration, mock model)", () => {
     expect(
       result && "result" in result && (result.result as { denied?: boolean }).denied,
     ).toBe(true);
+    expect(
+      result &&
+        "result" in result &&
+        (result.result as { message?: string }).message,
+    ).toBe(PLAN_MODE_DENIAL_MESSAGE);
 
     let existed = true;
     await readFile(join(root, "out.txt"), "utf8").catch(() => (existed = false));
@@ -192,36 +278,95 @@ describe("Session (integration, mock model)", () => {
     expect(existed).toBe(false);
   });
 
-  test("entering plan mode sets a plan file path and creates the directory", async () => {
+  test("plan send injects the plan-mode reminder into the model prompt", async () => {
+    const prompts: unknown[] = [];
     const session = createSession(
-      config({ defaultDecision: "allow", tools: {} }),
+      config({ defaultDecision: "allow", tools: {} }, "plan"),
       async () => "allow-once",
+      { model: capturePromptModel(prompts) },
     );
 
-    session.setMode("plan");
-    const planFile = session.planFile;
-    expect(planFile).toBeTruthy();
-    expect(planFile!.startsWith(".cozycode/plans/")).toBe(true);
-    expect(planFile!.endsWith(".md")).toBe(true);
+    const done = collect(session.events, "finish");
+    await session.send("inspect this change");
+    await done;
 
-    // The plan file directory should exist.
-    const { stat } = await import("node:fs/promises");
-    const dirInfo = await stat(join(root, ".cozycode/plans"));
-    expect(dirInfo.isDirectory()).toBe(true);
+    expect(promptText(prompts)).toContain("inspect this change");
+    expect(promptText(prompts)).toContain(PLAN_MODE_REMINDER);
   });
 
-  test("plan -> build preserves planFile path for build-agent instructions", async () => {
+  test("first build send after a plan turn injects the build-switch reminder once", async () => {
+    const prompts: unknown[] = [];
     const session = createSession(
       config({ defaultDecision: "allow", tools: {} }),
       async () => "allow-once",
+      { model: capturePromptModel(prompts) },
     );
 
     session.setMode("plan");
-    const planFile = session.planFile;
-    expect(planFile).toBeTruthy();
+    let done = collect(session.events, "finish");
+    await session.send("make a plan");
+    await done;
 
     session.setMode("build");
-    // planFile is retained so buildAgent can reference it in instructions.
-    expect(session.mode).toBe("build");
-    expect(session.planFile).toBe(planFile);
-  });});
+    done = collect(session.events, "finish");
+    await session.send("go ahead");
+    await done;
+    done = collect(session.events, "finish");
+    await session.send("continue");
+    await done;
+
+    expect(latestUserText(prompts, 1)).toContain(BUILD_SWITCH_REMINDER);
+    expect(latestUserText(prompts, 2)).not.toContain(BUILD_SWITCH_REMINDER);
+  });
+
+  test("plan to build with no plan send does not inject the build-switch reminder", async () => {
+    const prompts: unknown[] = [];
+    const session = createSession(
+      config({ defaultDecision: "allow", tools: {} }),
+      async () => "allow-once",
+      { model: capturePromptModel(prompts) },
+    );
+
+    session.setMode("plan");
+    session.setMode("build");
+    const done = collect(session.events, "finish");
+    await session.send("start now");
+    await done;
+
+    expect(promptText(prompts)).not.toContain(BUILD_SWITCH_REMINDER);
+  });
+
+  test("plain build send has no mode reminders", async () => {
+    const prompts: unknown[] = [];
+    const session = createSession(
+      config({ defaultDecision: "allow", tools: {} }),
+      async () => "allow-once",
+      { model: capturePromptModel(prompts) },
+    );
+
+    const done = collect(session.events, "finish");
+    await session.send("build normally");
+    await done;
+
+    expect(promptText(prompts)).not.toContain(PLAN_MODE_REMINDER);
+    expect(promptText(prompts)).not.toContain(BUILD_SWITCH_REMINDER);
+  });
+
+  test("unknown shell command in plan mode under ask policy invokes approval", async () => {
+    let asked = false;
+    const session = createSession(
+      config({ defaultDecision: "ask", tools: { run_shell: "ask" } }, "plan"),
+      async () => {
+        asked = true;
+        return "deny";
+      },
+      { model: twoStepShellModel("bun run build") },
+    );
+
+    const done = collect(session.events, "finish");
+    await session.send("try a shell command");
+    await done;
+
+    expect(asked).toBe(true);
+  });
+});
