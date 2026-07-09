@@ -1,96 +1,52 @@
 import { test, expect, describe } from "bun:test";
-import type { ApprovalOutcome, PermissionPolicy } from "@cozycode/protocol";
-import { PermissionGate } from "../src/permissions.ts";
+import type { AgentMode, SessionEvent } from "@cozycode/protocol";
+import { PermissionService, PermissionDeniedError } from "../src/permission/service.ts";
+import { rulesetFromConfig, mergeRulesets, PLAN_RULESET } from "../src/permission/config.ts";
+import { buildTools } from "../src/tools/index.ts";
 import { PLAN_MODE_DENIAL_MESSAGE } from "../src/config.ts";
 
-const policy: PermissionPolicy = {
-  defaultDecision: "allow",
-  tools: { write_file: "allow", edit_file: "allow", run_shell: "allow" },
-};
-
-function input(toolName: string, args: unknown = {}) {
-  return {
-    toolCallId: "c1",
-    toolName,
-    args,
-    summary: `${toolName}`,
-  };
+/** The effective ruleset for plan mode: base (allow-all here) + plan overlay. */
+function planRuleset() {
+  return mergeRulesets(rulesetFromConfig("allow"), PLAN_RULESET);
 }
 
-describe("PermissionGate plan mode", () => {
-  test("hard-denies write_file even when policy is allow", async () => {
-    const gate = new PermissionGate(policy, async () => "allow-once", "plan");
-    const res = await gate.authorize(input("write_file", { path: "a", content: "x" }));
-    expect(res).toEqual({
-      allowed: false,
-      decision: "deny",
-      message: PLAN_MODE_DENIAL_MESSAGE,
+describe("plan-mode ruleset overlay", () => {
+  test("edit is denied even when the base ruleset allows it", async () => {
+    const svc = new PermissionService(planRuleset(), "s1", () => {});
+    await expect(
+      svc.ask({ permission: "edit", patterns: ["a.ts"], always: ["*"], metadata: {} }),
+    ).rejects.toBeInstanceOf(PermissionDeniedError);
+  });
+
+  test("bash is still allowed by the base (not touched by the plan overlay)", async () => {
+    const svc = new PermissionService(planRuleset(), "s1", () => {});
+    // base is allow-all, so a bash command resolves silently under plan too.
+    await expect(
+      svc.ask({ permission: "bash", patterns: ["ls"], always: ["ls *"], metadata: {} }),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("buildTools plan-mode denial message", () => {
+  function toolsForMode(mode: AgentMode) {
+    const events: SessionEvent[] = [];
+    const svc = new PermissionService(planRuleset(), "s1", (e) => events.push(e));
+    const tools = buildTools({
+      ctx: { workspaceRoot: "/tmp" },
+      permissions: svc,
+      getMode: () => mode,
     });
-  });
+    return tools;
+  }
 
-  test("hard-denies edit_file even when policy is allow", async () => {
-    const gate = new PermissionGate(policy, async () => "allow-once", "plan");
-    const res = await gate.authorize(input("edit_file", { path: "a" }));
-    expect(res).toEqual({
-      allowed: false,
-      decision: "deny",
-      message: PLAN_MODE_DENIAL_MESSAGE,
-    });
-  });
-
-  test("run_shell follows normal policy in plan mode", async () => {
-    let asks = 0;
-    const outcomes: ApprovalOutcome[] = ["allow-once"];
-    const askPolicy: PermissionPolicy = {
-      defaultDecision: "ask",
-      tools: { run_shell: "ask" },
-      shellDestructiveDecision: "deny",
-    };
-    const gate = new PermissionGate(askPolicy, async () => {
-      asks += 1;
-      return outcomes[asks - 1] ?? "deny";
-    }, "plan");
-
-    expect(
-      await gate.authorize(input("run_shell", { command: "git status" })),
-    ).toEqual({ allowed: true, decision: "allow" });
-    expect(asks).toBe(0);
-
-    expect(
-      await gate.authorize(input("run_shell", { command: "bun run build" })),
-    ).toEqual({ allowed: true, decision: "ask" });
-    expect(asks).toBe(1);
-
-    expect(
-      await gate.authorize(input("run_shell", { command: "rm -rf x" })),
-    ).toEqual({ allowed: false, decision: "deny" });
-    expect(asks).toBe(1);
-  });
-
-  test("read-only tools follow the normal policy in plan mode", async () => {
-    const gate = new PermissionGate(policy, async () => "allow-once", "plan");
-    expect((await gate.authorize(input("read_file", { path: "a" }))).allowed).toBe(true);
-    expect((await gate.authorize(input("search", { glob: "*.ts" }))).allowed).toBe(true);
-  });
-
-  test("setMode(plan) clears session grants so prior allows stop applying", async () => {
-    const gate = new PermissionGate(policy, async () => "allow-session");
-    // Grant write_file in build mode.
-    expect((await gate.authorize(input("write_file", { path: "a", content: "x" }))).allowed).toBe(true);
-    expect(gate.resolve("write_file")).toBe("allow");
-
-    gate.setMode("plan");
-    expect(gate.getMode()).toBe("plan");
-    // Grant is gone; plan enforcement denies regardless.
-    expect(gate.resolve("write_file")).toBe("allow"); // policy still says allow
-    const res = await gate.authorize(input("write_file", { path: "a", content: "x" }));
-    expect(res.allowed).toBe(false); // but plan override denies
-  });
-
-  test("setMode(build) restores normal authorization", async () => {
-    const gate = new PermissionGate(policy, async () => "allow-once", "plan");
-    expect((await gate.authorize(input("write_file", { path: "a", content: "x" }))).allowed).toBe(false);
-    gate.setMode("build");
-    expect((await gate.authorize(input("write_file", { path: "a", content: "x" }))).allowed).toBe(true);
+  test("a denied edit in plan mode returns the plan-mode guidance", async () => {
+    const tools = toolsForMode("plan");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const execute = (tools.write_file as any).execute;
+    const result = await execute(
+      { path: "a.txt", content: "x" },
+      { toolCallId: "c1" },
+    );
+    expect(result).toEqual({ denied: true, message: PLAN_MODE_DENIAL_MESSAGE });
   });
 });

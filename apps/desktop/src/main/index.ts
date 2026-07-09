@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog } from "electron";
 import { join } from "node:path";
-import type { AgentMode, ApprovalOutcome } from "@cozycode/protocol";
+import type { AgentMode, PermissionReplyBody } from "@cozycode/protocol";
 import { IPC, type AppSettingsInput, type PermissionPreset } from "../shared/ipc.ts";
 import { SettingsStore } from "./settings.ts";
 import { SessionManager } from "./session-manager.ts";
@@ -71,10 +71,8 @@ function registerIpc(): void {
   ipcMain.handle(IPC.sessionSetPreset, (_e, preset: PermissionPreset) =>
     manager?.setPreset(preset),
   );
-  ipcMain.handle(
-    IPC.approvalRespond,
-    (_e, payload: { requestId: string; outcome: ApprovalOutcome }) =>
-      manager?.resolveApproval(payload.requestId, payload.outcome),
+  ipcMain.handle(IPC.permissionReply, (_e, body: PermissionReplyBody) =>
+    manager?.replyPermission(body),
   );
 
   // session management

@@ -4,12 +4,13 @@ import {
   createSession,
   fetchModels,
   mergeModels,
+  mergeRulesets,
+  rulesetFromConfig,
   type Session,
 } from "@cozycode/core";
 import type {
   AgentMode,
-  ApprovalOutcome,
-  ApprovalRequest,
+  PermissionReplyBody,
   ProviderConfig,
   SessionConfig,
   SessionEvent,
@@ -31,7 +32,6 @@ export class SessionManager {
   private activeMeta: SessionMeta | null = null;
   /** Provider/workspace signature; a change forces a context-preserving rebuild. */
   private configKey = "";
-  private readonly pendingApprovals = new Map<string, (o: ApprovalOutcome) => void>();
   private readonly store = new SessionStore();
   readonly terminals: TerminalManager;
   private modelCache: { at: number; baseURL: string; models: string[] } | null = null;
@@ -58,12 +58,17 @@ export class SessionManager {
 
   private async buildConfig(meta: SessionMeta): Promise<SessionConfig> {
     const provider = await this.provider();
-    const { mode, policy } = resolvePreset(meta.preset);
+    const settings = await this.settings.getPublic();
+    const { mode, ruleset } = resolvePreset(meta.preset);
+    // User config overrides are merged last so they win (last-match-wins).
+    const permissions = settings?.permissions
+      ? mergeRulesets(ruleset, rulesetFromConfig(settings.permissions))
+      : ruleset;
     return {
       provider,
       model: meta.model,
       workspaceRoot: meta.workspaceRoot ?? homedir(),
-      permissions: policy,
+      permissions,
       mode,
     };
   }
@@ -83,9 +88,10 @@ export class SessionManager {
     const initialHistory = this.session
       ? this.session.snapshotHistory()
       : await this.store.readHistory(meta.id);
+    // close() cascade-rejects any parked permission asks on the old session.
     this.session?.close();
     this.configKey = key;
-    this.session = createSession(config, (req) => this.requestApproval(req), {
+    this.session = createSession(config, {
       id: meta.id,
       initialHistory,
     });
@@ -165,12 +171,8 @@ export class SessionManager {
     this.notifyChanged();
   }
 
-  /** Deny parked approvals, flush history, and close the live session. */
+  /** Flush history and close the live session (which cascade-rejects parked asks). */
   private async teardownActive(): Promise<void> {
-    for (const [reqId, resolve] of this.pendingApprovals) {
-      resolve("deny");
-      this.pendingApprovals.delete(reqId);
-    }
     if (this.session && this.activeMeta) {
       await this.store.writeHistory(this.activeMeta.id, this.session.snapshotHistory());
     }
@@ -195,10 +197,10 @@ export class SessionManager {
   async setPreset(preset: PermissionPreset): Promise<void> {
     if (!this.activeMeta) return;
     this.activeMeta.preset = preset;
-    const { mode, policy } = resolvePreset(preset);
     if (this.session) {
-      this.session.setMode(mode);
-      this.session.setPermissions(policy);
+      const config = await this.buildConfig(this.activeMeta);
+      if (config.mode) this.session.setMode(config.mode);
+      if (config.permissions) this.session.setPermissions(config.permissions);
     }
     await this.store.touch(this.activeMeta.id, { preset });
     this.notifyChanged();
@@ -226,25 +228,18 @@ export class SessionManager {
 
   private async pump(session: Session, sessionId: string): Promise<void> {
     for await (const event of session.events) {
-      this.store.appendEvent(sessionId, event);
+      // Permission asks/replies are live-only control events; persisting them
+      // would resurrect stale modals on replay.
+      if (event.type !== "permission-asked" && event.type !== "permission-replied") {
+        this.store.appendEvent(sessionId, event);
+      }
       if (this.web.isDestroyed()) return;
       this.web.send(IPC.sessionEvent, event);
     }
   }
 
-  private requestApproval(req: ApprovalRequest): Promise<ApprovalOutcome> {
-    return new Promise((resolve) => {
-      this.pendingApprovals.set(req.requestId, resolve);
-      if (!this.web.isDestroyed()) this.web.send(IPC.approvalRequest, req);
-    });
-  }
-
-  resolveApproval(requestId: string, outcome: ApprovalOutcome): void {
-    const resolve = this.pendingApprovals.get(requestId);
-    if (resolve) {
-      this.pendingApprovals.delete(requestId);
-      resolve(outcome);
-    }
+  replyPermission(body: PermissionReplyBody): void {
+    this.session?.replyPermission(body.requestId, body.reply, body.message);
   }
 
   async send(message: string): Promise<{ ok: boolean; error?: string }> {

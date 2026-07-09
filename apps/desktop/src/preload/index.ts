@@ -1,10 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import type {
-  AgentMode,
-  ApprovalOutcome,
-  ApprovalRequest,
-  SessionEvent,
-} from "@cozycode/protocol";
+import type { AgentMode, PermissionReplyBody, SessionEvent } from "@cozycode/protocol";
 import {
   IPC,
   type AppSettingsInput,
@@ -25,8 +20,7 @@ const api: CozyApi = {
   setMode: (mode: AgentMode) => ipcRenderer.invoke(IPC.sessionSetMode, mode),
   setModel: (model: string) => ipcRenderer.invoke(IPC.sessionSetModel, model),
   setPreset: (preset: PermissionPreset) => ipcRenderer.invoke(IPC.sessionSetPreset, preset),
-  respondApproval: (requestId: string, outcome: ApprovalOutcome) =>
-    ipcRenderer.invoke(IPC.approvalRespond, { requestId, outcome }),
+  replyPermission: (body: PermissionReplyBody) => ipcRenderer.invoke(IPC.permissionReply, body),
 
   listSessions: () => ipcRenderer.invoke(IPC.sessionsList),
   createSession: (opts) => ipcRenderer.invoke(IPC.sessionsCreate, opts ?? {}),
@@ -59,11 +53,6 @@ const api: CozyApi = {
     const listener = (_e: IpcRendererEvent, event: SessionEvent) => cb(event);
     ipcRenderer.on(IPC.sessionEvent, listener);
     return () => ipcRenderer.off(IPC.sessionEvent, listener);
-  },
-  onApprovalRequest(cb: (request: ApprovalRequest) => void) {
-    const listener = (_e: IpcRendererEvent, request: ApprovalRequest) => cb(request);
-    ipcRenderer.on(IPC.approvalRequest, listener);
-    return () => ipcRenderer.off(IPC.approvalRequest, listener);
   },
   onSessionsChanged(cb: (sessions: SessionMeta[]) => void) {
     const listener = (_e: IpcRendererEvent, sessions: SessionMeta[]) => cb(sessions);

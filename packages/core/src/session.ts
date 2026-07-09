@@ -2,14 +2,16 @@ import { randomUUID } from "node:crypto";
 import { ToolLoopAgent, isStepCount, type LanguageModel, type ModelMessage } from "ai";
 import type {
   AgentMode,
-  ApprovalHandler,
-  PermissionPolicy,
+  PermissionReply,
+  PermissionRequest,
+  Ruleset,
   SessionConfig,
   SessionEvent,
   TokenUsage,
 } from "@cozycode/protocol";
 import { createModel } from "./model.ts";
-import { PermissionGate } from "./permissions.ts";
+import { PermissionService } from "./permission/service.ts";
+import { DEFAULT_RULESET, PLAN_RULESET, mergeRulesets } from "./permission/config.ts";
 import { buildTools } from "./tools/index.ts";
 import { AsyncEventQueue } from "./events.ts";
 import {
@@ -30,7 +32,7 @@ export interface SessionOptions {
 
 /**
  * A conversation with the coding agent. Owns the message history, the model,
- * the permission gate, and the tool set. `events` is a long-lived stream a
+ * the permission service, and the tool set. `events` is a long-lived stream a
  * frontend consumes for the whole session; each `send()` drives one agent turn
  * and emits into that stream.
  */
@@ -39,7 +41,9 @@ export class Session {
   readonly events = new AsyncEventQueue<SessionEvent>();
 
   private readonly history: ModelMessage[] = [];
-  private readonly gate: PermissionGate;
+  /** The base (build-mode) ruleset; the plan overlay is applied per mode. */
+  private baseRuleset: Ruleset;
+  private readonly permissions: PermissionService;
   private readonly tools: ReturnType<typeof buildTools>;
   private agent: ToolLoopAgent;
   private currentModel: string;
@@ -54,18 +58,22 @@ export class Session {
 
   constructor(
     private readonly config: SessionConfig,
-    approvalHandler: ApprovalHandler,
     options: SessionOptions = {},
   ) {
     this.id = options.id ?? randomUUID();
     if (options.initialHistory?.length) this.history.push(...options.initialHistory);
     const initialMode = config.mode ?? "build";
     this.currentMode = initialMode;
-    this.gate = new PermissionGate(config.permissions, approvalHandler, initialMode);
+    this.baseRuleset = config.permissions ?? DEFAULT_RULESET;
+    this.permissions = new PermissionService(
+      this.effectiveRuleset(initialMode),
+      this.id,
+      (e) => this.events.push(e),
+    );
     this.tools = buildTools({
       ctx: { workspaceRoot: config.workspaceRoot },
-      gate: this.gate,
-      emit: (e) => this.events.push(e),
+      permissions: this.permissions,
+      getMode: () => this.currentMode,
     });
     this.currentModel = config.model;
     // A pre-built model can be injected (tests, custom wrapping); otherwise we
@@ -92,9 +100,28 @@ export class Session {
     return structuredClone(this.history);
   }
 
-  /** Replace the permission policy live (e.g. switching a permission preset). */
-  setPermissions(policy: PermissionPolicy): void {
-    this.gate.setPolicy(policy);
+  /**
+   * The ruleset actually in force for a mode: plan mode overlays the plan
+   * ruleset (deny edits) on top of the base; build mode uses the base as-is.
+   */
+  private effectiveRuleset(mode: AgentMode): Ruleset {
+    return mode === "plan" ? mergeRulesets(this.baseRuleset, PLAN_RULESET) : this.baseRuleset;
+  }
+
+  /** Replace the base permission ruleset live (e.g. switching a permission preset). */
+  setPermissions(ruleset: Ruleset): void {
+    this.baseRuleset = ruleset;
+    this.permissions.setRuleset(this.effectiveRuleset(this.currentMode));
+  }
+
+  /** Answer a pending permission ask. Safe to call with an unknown/stale id. */
+  replyPermission(requestId: string, reply: PermissionReply, message?: string): void {
+    this.permissions.reply(requestId, reply, message);
+  }
+
+  /** The permission asks currently awaiting a decision (for UI resync). */
+  pendingPermissions(): PermissionRequest[] {
+    return this.permissions.listPending();
   }
 
   /**
@@ -120,7 +147,7 @@ export class Session {
       this.hadPlanTurn = false;
     }
     this.currentMode = mode;
-    this.gate.setMode(mode);
+    this.permissions.setRuleset(this.effectiveRuleset(mode));
     this.events.push({ type: "mode-change", mode });
   }
 
@@ -173,14 +200,19 @@ export class Session {
     }
   }
 
-  /** Abort the in-flight turn, if any. */
+  /** Abort the in-flight turn, if any. Also rejects any parked permission asks. */
   abort(): void {
     this.abortController?.abort();
+    // Without this, a tool call parked on a pending ask stays suspended forever
+    // even after the stream is aborted, keeping the turn open.
+    this.permissions.rejectAll();
   }
 
   /** Close the event stream; call when the session is being torn down. */
   close(): void {
     this.abort();
+    // rejectAll() (via abort) pushed the replied events; the queue buffers them
+    // so consumers drain them before seeing done.
     this.events.close();
   }
 

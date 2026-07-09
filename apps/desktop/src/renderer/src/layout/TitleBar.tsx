@@ -45,7 +45,7 @@ export function TitleBar() {
   return (
     <header className="app-drag flex h-12 items-center justify-between border-b border-border/60 px-3">
       {/* Left: clears the native traffic lights, then nav arrows. */}
-      <div className="flex items-center gap-1 pl-[72px]">
+      <div className="flex items-center gap-1 pl-18">
         <IconButton label="Back" disabled>
           <ChevronLeft className="size-4" />
         </IconButton>

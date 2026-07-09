@@ -49,4 +49,28 @@ describe("resolveConfig", () => {
   test("throws a helpful error when required fields are missing", () => {
     expect(() => resolveConfig([root], {} as NodeJS.ProcessEnv)).toThrow(/Missing required config/);
   });
+
+  test("defaults to the core ruleset when no permissions are configured", () => {
+    const r = resolveConfig([root], {
+      COZY_BASE_URL: "https://x/v1",
+      COZY_MODEL: "m1",
+    } as NodeJS.ProcessEnv);
+    // edit asks by default in the core ruleset.
+    expect(r.session.permissions?.some((rule) => rule.permission === "edit")).toBe(true);
+  });
+
+  test("merges permission overrides from the config file over the default ruleset", async () => {
+    await writeFile(
+      join(root, "cozycode.json"),
+      JSON.stringify({
+        baseURL: "https://file/v1",
+        model: "file-model",
+        permissions: { edit: "allow" },
+      }),
+    );
+    const r = resolveConfig([root], {} as NodeJS.ProcessEnv);
+    // The override is merged last, so it wins (last-match-wins).
+    const last = r.session.permissions!.filter((rule) => rule.permission === "edit").at(-1);
+    expect(last?.action).toBe("allow");
+  });
 });

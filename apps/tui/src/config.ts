@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { homedir } from "node:os";
-import type { SessionConfig } from "@cozycode/protocol";
-import { DEFAULT_PERMISSION_POLICY } from "@cozycode/core";
+import type { PermissionConfig, SessionConfig } from "@cozycode/protocol";
+import { DEFAULT_RULESET, mergeRulesets, rulesetFromConfig } from "@cozycode/core";
 
 /** Shape of an optional on-disk config file. */
 interface FileConfig {
@@ -12,6 +12,8 @@ interface FileConfig {
   model?: string;
   /** Optional explicit list of selectable models. */
   models?: string[];
+  /** Optional permission-rule overrides, merged over the default ruleset. */
+  permissions?: PermissionConfig;
 }
 
 export interface ResolvedConfig {
@@ -69,7 +71,9 @@ export function resolveConfig(argv: string[], env: NodeJS.ProcessEnv): ResolvedC
       model: model!,
       models: Array.isArray(file.models) ? file.models : undefined,
       workspaceRoot,
-      permissions: DEFAULT_PERMISSION_POLICY,
+      permissions: file.permissions
+        ? mergeRulesets(DEFAULT_RULESET, rulesetFromConfig(file.permissions))
+        : DEFAULT_RULESET,
     },
     model: model!,
     workspaceRoot,

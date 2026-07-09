@@ -1,19 +1,34 @@
 import type { SelectOption } from "@opentui/core";
-import type { ApprovalOutcome, ApprovalRequest } from "@cozycode/protocol";
+import type { PermissionReply, PermissionRequest } from "@cozycode/protocol";
 import { theme } from "../theme.ts";
 
 interface Props {
-  request: ApprovalRequest;
-  onRespond: (outcome: ApprovalOutcome) => void;
+  request: PermissionRequest;
+  queueLength: number;
+  onRespond: (reply: PermissionReply, message?: string) => void;
 }
 
-const OPTIONS: SelectOption[] = [
-  { name: "Allow once", description: "Approve this action", value: "allow-once" satisfies ApprovalOutcome },
-  { name: "Always allow", description: "Approve this tool for this session", value: "allow-session" satisfies ApprovalOutcome },
-  { name: "Deny", description: "Block the action", value: "deny" satisfies ApprovalOutcome },
-];
+export function ApprovalPrompt({ request, queueLength, onRespond }: Props) {
+  const summary = typeof request.metadata.summary === "string" ? request.metadata.summary : "";
+  const detail = summary || request.patterns.join(", ");
 
-export function ApprovalPrompt({ request, onRespond }: Props) {
+  // The "always" label is dynamic (it names the grant), so options are per-request.
+  const options: SelectOption[] = [
+    { name: "Allow once", description: "Approve this action", value: "once" satisfies PermissionReply },
+  ];
+  if (request.always.length > 0) {
+    options.push({
+      name: `Always allow "${request.always.join('", "')}"`,
+      description: "Grant this for the rest of the session",
+      value: "always" satisfies PermissionReply,
+    });
+  }
+  options.push({
+    name: "Reject",
+    description: "Block the action",
+    value: "reject" satisfies PermissionReply,
+  });
+
   return (
     <box
       flexDirection="column"
@@ -25,21 +40,21 @@ export function ApprovalPrompt({ request, onRespond }: Props) {
       paddingY={1}
     >
       <text fg={theme.warning}>
-        △ Approve action?
+        △ Approve action?{queueLength > 1 ? ` (1 of ${queueLength})` : ""}
       </text>
       <text>
-        <span style={{ fg: theme.accent }}>{request.toolName}</span>
-        <span style={{ fg: theme.muted }}> · {request.summary}</span>
+        <span style={{ fg: theme.accent }}>{request.permission}</span>
+        <span style={{ fg: theme.muted }}> · {detail}</span>
       </text>
       <box marginTop={1} height={4}>
         <select
           focused
-          options={OPTIONS}
+          options={options}
           textColor={theme.text}
           selectedTextColor={theme.bg}
           selectedBackgroundColor={theme.warning}
           descriptionColor={theme.muted}
-          onSelect={(_index, option) => option?.value && onRespond(option.value as ApprovalOutcome)}
+          onSelect={(_index, option) => option?.value && onRespond(option.value as PermissionReply)}
         />
       </box>
     </box>

@@ -129,7 +129,17 @@ export class SettingsStore {
 }
 
 function normalize(s: StoredSettings): StoredSettings {
-  return { ...s, providerName: s.providerName || "openai-compatible" };
+  const next = { ...s, providerName: s.providerName || "openai-compatible" };
+  // Discard legacy PermissionPolicy shape ({ defaultDecision, tools }); the
+  // permissions field is now an opencode-style PermissionConfig.
+  if (
+    next.permissions &&
+    typeof next.permissions === "object" &&
+    "defaultDecision" in (next.permissions as Record<string, unknown>)
+  ) {
+    delete next.permissions;
+  }
+  return next;
 }
 
 function isConfigured(s: StoredSettings): boolean {

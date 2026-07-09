@@ -1,8 +1,8 @@
 import { create } from "zustand";
 import type {
   AgentMode,
-  ApprovalOutcome,
-  ApprovalRequest,
+  PermissionReply,
+  PermissionRequest,
   SessionEvent,
 } from "@cozycode/protocol";
 import type {
@@ -40,7 +40,8 @@ export interface AppState {
   preset: PermissionPreset;
   model: string;
   models: string[];
-  approval: ApprovalRequest | null;
+  /** FIFO of pending permission asks; the modal shows the head, badge shows length. */
+  permissionQueue: PermissionRequest[];
   input: string;
 
   // terminals
@@ -72,7 +73,7 @@ export interface AppState {
   setMode(mode: AgentMode): void;
   setModel(model: string): void;
   refreshModels(): Promise<void>;
-  respondApproval(outcome: ApprovalOutcome): void;
+  replyPermission(requestId: string, reply: PermissionReply, message?: string): void;
   systemNote(text: string, error?: boolean): void;
 
   newTerminal(): Promise<void>;
@@ -110,7 +111,7 @@ export const useApp = create<AppState>((set, get) => ({
   preset: "ask",
   model: "",
   models: [],
-  approval: null,
+  permissionQueue: [],
   input: "",
 
   termTabs: [],
@@ -145,6 +146,13 @@ export const useApp = create<AppState>((set, get) => ({
       // Keep the pill honest if the mode changed underneath us.
       set((s) => ({ preset: event.mode === "plan" ? "plan" : s.preset === "plan" ? "ask" : s.preset }));
     }
+    if (event.type === "permission-asked") {
+      set((s) => ({ permissionQueue: [...s.permissionQueue, event.request] }));
+    }
+    if (event.type === "permission-replied") {
+      // Covers cascade-reject and always-grant of siblings too — no extra logic.
+      set((s) => ({ permissionQueue: s.permissionQueue.filter((r) => r.id !== event.requestId) }));
+    }
     if (event.type === "finish" || event.type === "error") set({ busy: false });
   },
 
@@ -172,6 +180,7 @@ export const useApp = create<AppState>((set, get) => ({
       model: snap.meta.model,
       busy: false,
       input: "",
+      permissionQueue: [],
     });
     await get().refreshSessions();
   },
@@ -186,6 +195,7 @@ export const useApp = create<AppState>((set, get) => ({
       model: snap.meta.model,
       busy: false,
       input: "",
+      permissionQueue: [],
     });
     void get().refreshModels();
   },
@@ -199,6 +209,7 @@ export const useApp = create<AppState>((set, get) => ({
         preset: snap.meta.preset,
         model: snap.meta.model,
         busy: false,
+        permissionQueue: [],
       });
     }
     await get().refreshSessions();
@@ -244,10 +255,10 @@ export const useApp = create<AppState>((set, get) => ({
     set({ models: await window.cozy.listModels() });
   },
 
-  respondApproval(outcome) {
-    const { approval } = get();
-    if (approval) window.cozy.respondApproval(approval.requestId, outcome);
-    set({ approval: null });
+  replyPermission(requestId, reply, message) {
+    // Optimistically drop from the queue; the replied event confirms it (idempotent).
+    set((s) => ({ permissionQueue: s.permissionQueue.filter((r) => r.id !== requestId) }));
+    void window.cozy.replyPermission({ requestId, reply, message });
   },
 
   systemNote(text, error) {

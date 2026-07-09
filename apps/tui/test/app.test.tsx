@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { testRender } from "@opentui/react/test-utils";
 import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
-import type { PermissionPolicy, SessionConfig } from "@cozycode/protocol";
+import type { PermissionConfig, SessionConfig } from "@cozycode/protocol";
+import { rulesetFromConfig } from "@cozycode/core";
 import { App } from "../src/app.tsx";
 import { Markdown } from "../src/components/Markdown.tsx";
 
@@ -47,12 +48,12 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-function config(policy: PermissionPolicy): SessionConfig {
+function config(permissions: PermissionConfig): SessionConfig {
   return {
     provider: { name: "mock", baseURL: "http://localhost/v1" },
     model: "mock-model",
     workspaceRoot: root,
-    permissions: policy,
+    permissions: rulesetFromConfig(permissions),
   };
 }
 
@@ -66,8 +67,8 @@ async function waitFor(fn: () => boolean | Promise<boolean>, timeout = 3000): Pr
   throw new Error("waitFor timed out");
 }
 
-async function renderApp(policy: PermissionPolicy, content: string) {
-  const cfg = config(policy);
+async function renderApp(permissions: PermissionConfig, content: string) {
+  const cfg = config(permissions);
   return testRender(
     <App
       config={cfg}
@@ -89,7 +90,7 @@ const fileExists = (name: string) =>
 describe("TUI App (integration, mock model)", () => {
   test("renders the status bar and composer on launch", async () => {
     const app = await renderApp(
-      { defaultDecision: "allow", tools: {} },
+      "allow",
       "x",
     );
     await app.flush();
@@ -101,7 +102,7 @@ describe("TUI App (integration, mock model)", () => {
 
   test("runs an allowed tool call and renders the inline diff", async () => {
     const app = await renderApp(
-      { defaultDecision: "allow", tools: { write_file: "allow" } },
+      "allow",
       "auto-approved content",
     );
 
@@ -133,7 +134,7 @@ describe("TUI App (integration, mock model)", () => {
 
   test("prompts for approval and applies the action once allowed", async () => {
     const app = await renderApp(
-      { defaultDecision: "ask", tools: { write_file: "ask" } },
+      { edit: "ask" },
       "approved content",
     );
 
@@ -154,7 +155,7 @@ describe("TUI App (integration, mock model)", () => {
   });
 
   test("auto-shows the sidebar on wide terminals", async () => {
-    const app = await renderApp({ defaultDecision: "allow", tools: {} }, "x");
+    const app = await renderApp("allow", "x");
     app.resize(130, 30);
     await app.flush();
     const frame = app.captureCharFrame();
@@ -165,7 +166,7 @@ describe("TUI App (integration, mock model)", () => {
   });
 
   test("toggles the sidebar with ctrl+b on narrow terminals", async () => {
-    const app = await renderApp({ defaultDecision: "allow", tools: {} }, "x");
+    const app = await renderApp("allow", "x");
     await app.flush();
     // Default width 100 (< 120) hides the sidebar.
     expect(app.captureCharFrame()).not.toContain("Workspace");
@@ -176,7 +177,7 @@ describe("TUI App (integration, mock model)", () => {
   });
 
   test("opens the model selector with ctrl+o and closes on escape", async () => {
-    const app = await renderApp({ defaultDecision: "allow", tools: {} }, "x");
+    const app = await renderApp("allow", "x");
     await app.flush();
     app.mockInput.pressKey("o", { ctrl: true });
     await waitFor(async () => {
@@ -194,7 +195,7 @@ describe("TUI App (integration, mock model)", () => {
 
   test("handles help slash command without sending a model message", async () => {
     const app = await renderApp(
-      { defaultDecision: "allow", tools: {} },
+      "allow",
       "x",
     );
 
@@ -210,7 +211,7 @@ describe("TUI App (integration, mock model)", () => {
 
   test("/plan switches the prompt to read-only Plan mode without invoking the model", async () => {
     const app = await renderApp(
-      { defaultDecision: "allow", tools: { write_file: "allow" } },
+      "allow",
       "should not be written",
     );
 
@@ -229,7 +230,7 @@ describe("TUI App (integration, mock model)", () => {
 
   test("/plan then /build restores Build mode", async () => {
     const app = await renderApp(
-      { defaultDecision: "allow", tools: { write_file: "allow" } },
+      "allow",
       "x",
     );
 
@@ -247,7 +248,7 @@ describe("TUI App (integration, mock model)", () => {
 
   test("Tab key toggles between Plan and Build modes", async () => {
     const app = await renderApp(
-      { defaultDecision: "allow", tools: { write_file: "allow" } },
+      "allow",
       "x",
     );
 
@@ -267,7 +268,7 @@ describe("TUI App (integration, mock model)", () => {
 
   test("typing a slash prefix shows command autocomplete suggestions", async () => {
     const app = await renderApp(
-      { defaultDecision: "allow", tools: { write_file: "allow" } },
+      "allow",
       "x",
     );
 
@@ -281,7 +282,7 @@ describe("TUI App (integration, mock model)", () => {
 
   test("an unknown slash command reports an error and does not hit the model", async () => {
     const app = await renderApp(
-      { defaultDecision: "allow", tools: { write_file: "allow" } },
+      "allow",
       "should not be written",
     );
 

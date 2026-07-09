@@ -1,218 +1,201 @@
 import { test, expect, describe } from "bun:test";
-import type { ApprovalOutcome, PermissionPolicy } from "@cozycode/protocol";
-import { PermissionGate } from "../src/permissions.ts";
+import type { SessionEvent } from "@cozycode/protocol";
+import {
+  PermissionService,
+  PermissionDeniedError,
+  PermissionRejectedError,
+  PermissionCorrectedError,
+  evaluateRule,
+  type AskInput,
+} from "../src/permission/service.ts";
+import { rulesetFromConfig } from "../src/permission/config.ts";
 
-const policy: PermissionPolicy = {
-  defaultDecision: "ask",
-  tools: { read_file: "allow", run_shell: "ask", secret_tool: "deny" },
-};
-
-function input(toolName: string) {
-  return { toolCallId: "c1", toolName, args: {}, summary: `run ${toolName}` };
+function makeService(config: Parameters<typeof rulesetFromConfig>[0]) {
+  const events: SessionEvent[] = [];
+  const svc = new PermissionService(rulesetFromConfig(config), "s1", (e) => events.push(e));
+  return { svc, events };
 }
 
-describe("PermissionGate", () => {
-  test("allow decisions proceed without prompting", async () => {
-    let asked = false;
-    const gate = new PermissionGate(policy, async () => {
-      asked = true;
-      return "allow-once";
-    });
-    const res = await gate.authorize(input("read_file"));
-    expect(res).toEqual({ allowed: true, decision: "allow" });
-    expect(asked).toBe(false);
+const bashAsk = (command: string): AskInput => ({
+  permission: "bash",
+  patterns: [command],
+  always: [`${command.split(" ")[0]} *`],
+  metadata: { command },
+});
+
+describe("evaluateRule", () => {
+  test("last match wins across merged rulesets", () => {
+    const rs = [
+      ...rulesetFromConfig({ edit: "ask" }),
+      ...rulesetFromConfig({ edit: "allow" }),
+    ];
+    expect(evaluateRule("edit", "x", rs).action).toBe("allow");
   });
 
-  test("deny decisions are blocked without prompting", async () => {
-    let asked = false;
-    const gate = new PermissionGate(policy, async () => {
-      asked = true;
-      return "allow-once";
-    });
-    const res = await gate.authorize(input("secret_tool"));
-    expect(res).toEqual({ allowed: false, decision: "deny" });
-    expect(asked).toBe(false);
+  test("no match defaults to ask", () => {
+    expect(evaluateRule("mystery", "x", []).action).toBe("ask");
+  });
+});
+
+describe("PermissionService.ask", () => {
+  test("all-allow returns silently and emits nothing", async () => {
+    const { svc, events } = makeService({ read: "allow" });
+    await svc.ask({ permission: "read", patterns: ["a.ts"], always: ["*"], metadata: {} });
+    expect(events).toEqual([]);
   });
 
-  test("ask defers to the handler; allow-once does not persist", async () => {
-    let calls = 0;
-    const gate = new PermissionGate(policy, async () => {
-      calls += 1;
-      return "allow-once";
-    });
-    const runShell = (cmd: string) => ({
-      toolCallId: "c1",
-      toolName: "run_shell" as const,
-      args: { command: cmd },
-      summary: `Run: ${cmd}`,
-    });
-    expect((await gate.authorize(runShell("bun run build"))).allowed).toBe(true);
-    expect((await gate.authorize(runShell("bun run build"))).allowed).toBe(true);
-    expect(calls).toBe(2); // asked every time
+  test("a deny rule throws PermissionDeniedError without asking", async () => {
+    const { svc, events } = makeService({ edit: "deny" });
+    await expect(
+      svc.ask({ permission: "edit", patterns: ["a.ts"], always: ["*"], metadata: {} }),
+    ).rejects.toBeInstanceOf(PermissionDeniedError);
+    expect(events).toEqual([]);
   });
 
-  test("allow-session is remembered for subsequent calls", async () => {
-    let calls = 0;
-    const outcomes: ApprovalOutcome[] = ["allow-session"];
-    const gate = new PermissionGate(policy, async () => {
-      calls += 1;
-      return outcomes[calls - 1] ?? "deny";
-    });
-    const runShell = (cmd: string) => ({
-      toolCallId: "c1",
-      toolName: "run_shell" as const,
-      args: { command: cmd },
-      summary: `Run: ${cmd}`,
-    });
-    expect((await gate.authorize(runShell("bun run build"))).allowed).toBe(true);
-    // Second call should NOT ask again — the grant is remembered.
-    expect((await gate.authorize(runShell("bun run build"))).allowed).toBe(true);
-    expect(calls).toBe(1);
-    expect(gate.resolve("run_shell")).toBe("allow");
+  test("an ask parks the request and emits permission-asked", async () => {
+    const { svc, events } = makeService({ edit: "ask" });
+    const pending = svc.ask({ permission: "edit", patterns: ["a.ts"], always: ["*"], metadata: {} });
+    // give the microtask a tick to register
+    await Promise.resolve();
+    expect(events).toHaveLength(1);
+    expect(events[0]!.type).toBe("permission-asked");
+    expect(svc.listPending()).toHaveLength(1);
+    svc.reply(svc.listPending()[0]!.id, "once");
+    await pending;
+  });
+});
+
+describe("PermissionService.reply", () => {
+  test("once resolves the call", async () => {
+    const { svc } = makeService({ edit: "ask" });
+    const p = svc.ask({ permission: "edit", patterns: ["a.ts"], always: ["*"], metadata: {} });
+    await Promise.resolve();
+    svc.reply(svc.listPending()[0]!.id, "once");
+    await expect(p).resolves.toBeUndefined();
   });
 
-  test("deny outcome from handler blocks the call", async () => {
-    const gate = new PermissionGate(policy, async () => "deny");
-    expect((await gate.authorize({
-      toolCallId: "c1",
-      toolName: "run_shell",
-      args: { command: "bun run build" },
-      summary: "Run: bun run build",
-    })).allowed).toBe(false);
+  test("unknown request id is a no-op", () => {
+    const { svc } = makeService({ edit: "ask" });
+    expect(() => svc.reply("per_999", "once")).not.toThrow();
   });
 
-  test("unlisted tools fall back to defaultDecision", async () => {
-    const gate = new PermissionGate(policy, async () => "allow-once");
-    expect(gate.resolve("unknown_tool")).toBe("ask");
+  test("concurrent asks are independently addressable (the hang regression)", async () => {
+    const { svc } = makeService({ bash: "ask" });
+    const a = svc.ask(bashAsk("foo one"));
+    const b = svc.ask(bashAsk("bar two"));
+    await Promise.resolve();
+    expect(svc.listPending()).toHaveLength(2);
+
+    // Reply to only the first; the second must stay pending, not be dropped.
+    const [first, second] = svc.listPending();
+    svc.reply(first!.id, "once");
+    await expect(a).resolves.toBeUndefined();
+    expect(svc.listPending().map((r) => r.id)).toEqual([second!.id]);
+
+    svc.reply(second!.id, "once");
+    await b;
   });
 
-  test("safe shell commands bypass approval when policy is ask", async () => {
-    let asked = false;
-    const gate = new PermissionGate(policy, async () => {
-      asked = true;
-      return "allow-once";
+  test("always grants the request's always-patterns and unblocks covered siblings", async () => {
+    const { svc, events } = makeService({ bash: "ask" });
+    const a = svc.ask({
+      permission: "bash",
+      patterns: ["git commit -m x"],
+      always: ["git commit *"],
+      metadata: {},
     });
-    const res = await gate.authorize({
-      toolCallId: "c1",
-      toolName: "run_shell",
-      args: { command: "git status" },
-      summary: "Run: git status",
+    const b = svc.ask({
+      permission: "bash",
+      patterns: ["git commit -m y"],
+      always: ["git commit *"],
+      metadata: {},
     });
-    expect(res).toEqual({ allowed: true, decision: "allow" });
-    expect(asked).toBe(false);
+    await Promise.resolve();
+    expect(svc.listPending()).toHaveLength(2);
+
+    // "always" on the first should auto-resolve the second (same prefix grant).
+    svc.reply(svc.listPending()[0]!.id, "always");
+    await expect(a).resolves.toBeUndefined();
+    await expect(b).resolves.toBeUndefined();
+    expect(svc.listPending()).toHaveLength(0);
+
+    const replied = events.filter((e) => e.type === "permission-replied");
+    expect(replied.some((e) => e.type === "permission-replied" && e.reply === "always")).toBe(true);
   });
 
-  test("unknown shell commands prompt when policy is ask", async () => {
-    let asked = false;
-    const gate = new PermissionGate(policy, async () => {
-      asked = true;
-      return "allow-once";
-    });
-    const res = await gate.authorize({
-      toolCallId: "c1",
-      toolName: "run_shell",
-      args: { command: "bun run build" },
-      summary: "Run: bun run build",
-    });
-    expect(res.allowed).toBe(true);
-    expect(res.decision).toBe("ask");
-    expect(asked).toBe(true);
+  test("reject cascades to all pending requests", async () => {
+    const { svc, events } = makeService({ bash: "ask" });
+    const a = svc.ask(bashAsk("aaa one"));
+    const b = svc.ask(bashAsk("bbb two"));
+    const c = svc.ask(bashAsk("ccc three"));
+    await Promise.resolve();
+    expect(svc.listPending()).toHaveLength(3);
+
+    const results = Promise.allSettled([a, b, c]);
+    svc.reply(svc.listPending()[0]!.id, "reject");
+    const settled = await results;
+
+    expect(settled.every((s) => s.status === "rejected")).toBe(true);
+    expect(svc.listPending()).toHaveLength(0);
+    const replied = events.filter((e) => e.type === "permission-replied");
+    expect(replied).toHaveLength(3);
   });
 
-  test("destructive shell commands prompt when shellDestructiveDecision is ask (default)", async () => {
-    let asked = false;
-    const gate = new PermissionGate(policy, async () => {
-      asked = true;
-      return "allow-once";
+  test("reject with a message produces a corrected error carrying feedback", async () => {
+    const { svc } = makeService({ edit: "ask" });
+    const p = svc.ask({ permission: "edit", patterns: ["a.ts"], always: ["*"], metadata: {} });
+    await Promise.resolve();
+    svc.reply(svc.listPending()[0]!.id, "reject", "use the API instead");
+    await expect(p).rejects.toBeInstanceOf(PermissionCorrectedError);
+    await p.catch((err) => {
+      expect((err as Error).message).toContain("use the API instead");
     });
-    const res = await gate.authorize({
-      toolCallId: "c1",
-      toolName: "run_shell",
-      args: { command: "rm -rf node_modules" },
-      summary: "Run: rm -rf node_modules",
-    });
-    expect(res.allowed).toBe(true);
-    expect(res.decision).toBe("ask");
-    expect(asked).toBe(true);
   });
 
-  test("destructive shell commands are denied when shellDestructiveDecision is deny", async () => {
-    let asked = false;
-    const denyPolicy: PermissionPolicy = {
-      ...policy,
-      shellDestructiveDecision: "deny",
-    };
-    const gate = new PermissionGate(denyPolicy, async () => {
-      asked = true;
-      return "allow-once";
-    });
-    const res = await gate.authorize({
-      toolCallId: "c1",
-      toolName: "run_shell",
-      args: { command: "rm -rf node_modules" },
-      summary: "Run: rm -rf node_modules",
-    });
-    expect(res).toEqual({ allowed: false, decision: "deny" });
-    expect(asked).toBe(false);
+  test("non-focal cascaded rejects carry no feedback", async () => {
+    const { svc } = makeService({ bash: "ask" });
+    const a = svc.ask(bashAsk("aaa one"));
+    const b = svc.ask(bashAsk("bbb two"));
+    await Promise.resolve();
+    const settled = Promise.allSettled([a, b]);
+    svc.reply(svc.listPending()[0]!.id, "reject", "focal feedback");
+    const [ra, rb] = await settled;
+    expect(ra.status).toBe("rejected");
+    expect((ra as PromiseRejectedResult).reason).toBeInstanceOf(PermissionCorrectedError);
+    expect((rb as PromiseRejectedResult).reason).toBeInstanceOf(PermissionRejectedError);
+  });
+});
+
+describe("PermissionService lifecycle", () => {
+  test("rejectAll fails everything and emits replied events", async () => {
+    const { svc, events } = makeService({ bash: "ask" });
+    const a = svc.ask(bashAsk("aaa one"));
+    const b = svc.ask(bashAsk("bbb two"));
+    await Promise.resolve();
+    const settled = Promise.allSettled([a, b]);
+    svc.rejectAll();
+    const results = await settled;
+    expect(results.every((s) => s.status === "rejected")).toBe(true);
+    expect(events.filter((e) => e.type === "permission-replied")).toHaveLength(2);
   });
 
-  test("safe shell commands still bypass even when shellDestructiveDecision is deny", async () => {
-    let asked = false;
-    const denyPolicy: PermissionPolicy = {
-      ...policy,
-      shellDestructiveDecision: "deny",
-    };
-    const gate = new PermissionGate(denyPolicy, async () => {
-      asked = true;
-      return "allow-once";
-    });
-    const res = await gate.authorize({
-      toolCallId: "c1",
-      toolName: "run_shell",
-      args: { command: "git status" },
-      summary: "Run: git status",
-    });
-    expect(res).toEqual({ allowed: true, decision: "allow" });
-    expect(asked).toBe(false);
-  });
+  test("setRuleset clears runtime always-grants", async () => {
+    const { svc } = makeService({ bash: "ask" });
+    // Grant "ls *" via always.
+    const p = svc.ask({ permission: "bash", patterns: ["ls -la"], always: ["ls *"], metadata: {} });
+    await Promise.resolve();
+    svc.reply(svc.listPending()[0]!.id, "always");
+    await p;
 
-  test("unknown shell commands still prompt even when shellDestructiveDecision is deny", async () => {
-    let asked = false;
-    const denyPolicy: PermissionPolicy = {
-      ...policy,
-      shellDestructiveDecision: "deny",
-    };
-    const gate = new PermissionGate(denyPolicy, async () => {
-      asked = true;
-      return "allow-once";
-    });
-    const res = await gate.authorize({
-      toolCallId: "c1",
-      toolName: "run_shell",
-      args: { command: "bun run build" },
-      summary: "Run: bun run build",
-    });
-    expect(res.allowed).toBe(true);
-    expect(res.decision).toBe("ask");
-    expect(asked).toBe(true);
-  });
+    // A fresh "ls" is now covered by the grant → resolves silently.
+    await svc.ask({ permission: "bash", patterns: ["ls foo"], always: ["ls *"], metadata: {} });
 
-  test("explicit deny still blocks safe shell commands", async () => {
-    let asked = false;
-    const gate = new PermissionGate(
-      { defaultDecision: "ask", tools: { run_shell: "deny" } },
-      async () => {
-        asked = true;
-        return "allow-once";
-      },
-    );
-    const res = await gate.authorize({
-      toolCallId: "c1",
-      toolName: "run_shell",
-      args: { command: "git status" },
-      summary: "Run: git status",
-    });
-    expect(res).toEqual({ allowed: false, decision: "deny" });
-    expect(asked).toBe(false);
+    // Replacing the ruleset drops the grant → the next "ls" asks again.
+    svc.setRuleset(rulesetFromConfig({ bash: "ask" }));
+    const q = svc.ask({ permission: "bash", patterns: ["ls bar"], always: ["ls *"], metadata: {} });
+    await Promise.resolve();
+    expect(svc.listPending()).toHaveLength(1);
+    svc.reply(svc.listPending()[0]!.id, "once");
+    await q;
   });
 });

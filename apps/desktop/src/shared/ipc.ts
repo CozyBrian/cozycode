@@ -1,8 +1,7 @@
 import type {
   AgentMode,
-  ApprovalOutcome,
-  ApprovalRequest,
-  PermissionPolicy,
+  PermissionConfig,
+  PermissionReplyBody,
   SessionEvent,
 } from "@cozycode/protocol";
 
@@ -14,8 +13,8 @@ export interface AppSettings {
   model: string;
   /** Default workspace for new sessions. */
   workspaceRoot: string;
-  /** Optional override; falls back to the core default policy when absent. */
-  permissions?: PermissionPolicy;
+  /** Optional permission-rule overrides, merged over the preset's ruleset. */
+  permissions?: PermissionConfig;
   /** True when an API key is stored (the key itself is never sent to the UI). */
   hasApiKey: boolean;
 }
@@ -81,7 +80,7 @@ export const IPC = {
   sessionSetMode: "session:set-mode",
   sessionSetModel: "session:set-model",
   sessionSetPreset: "session:set-preset",
-  approvalRespond: "approval:respond",
+  permissionReply: "permission:reply",
   // sessions
   sessionsList: "sessions:list",
   sessionsCreate: "sessions:create",
@@ -97,7 +96,6 @@ export const IPC = {
   termKill: "term:kill",
   // main -> renderer (push)
   sessionEvent: "session:event",
-  approvalRequest: "approval:request",
   sessionsChanged: "sessions:changed",
   termData: "term:data",
   termExit: "term:exit",
@@ -115,7 +113,7 @@ export interface CozyApi {
   setMode(mode: AgentMode): Promise<void>;
   setModel(model: string): Promise<void>;
   setPreset(preset: PermissionPreset): Promise<void>;
-  respondApproval(requestId: string, outcome: ApprovalOutcome): Promise<void>;
+  replyPermission(body: PermissionReplyBody): Promise<void>;
 
   // session management
   listSessions(): Promise<SessionMeta[]>;
@@ -138,9 +136,8 @@ export interface CozyApi {
     onExit(cb: (payload: TermExit) => void): () => void;
   };
 
-  // push streams
+  // push streams (permission-asked / permission-replied arrive via onEvent)
   onEvent(cb: (event: SessionEvent) => void): () => void;
-  onApprovalRequest(cb: (request: ApprovalRequest) => void): () => void;
   onSessionsChanged(cb: (sessions: SessionMeta[]) => void): () => void;
 }
 

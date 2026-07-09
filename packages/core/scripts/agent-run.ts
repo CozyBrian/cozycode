@@ -14,8 +14,7 @@
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { resolve } from "node:path";
-import type { ApprovalOutcome } from "@cozycode/protocol";
-import { createSession, DEFAULT_PERMISSION_POLICY } from "../src/index.ts";
+import { createSession, DEFAULT_RULESET } from "../src/index.ts";
 
 const baseURL = process.env.COZY_BASE_URL;
 const apiKey = process.env.COZY_API_KEY;
@@ -42,29 +41,12 @@ if (!prompt) {
 
 const rl = createInterface({ input: stdin, output: stdout });
 
-const approvalHandler = async (req: {
-  toolName: string;
-  summary: string;
-}): Promise<ApprovalOutcome> => {
-  const answer = (
-    await rl.question(`\n⚠️  Approve "${req.toolName}"? ${req.summary}\n   [y]es / [a]lways / [n]o: `)
-  )
-    .trim()
-    .toLowerCase();
-  if (answer === "a" || answer === "always") return "allow-session";
-  if (answer === "y" || answer === "yes") return "allow-once";
-  return "deny";
-};
-
-const session = createSession(
-  {
-    provider: { name: "cli", baseURL, apiKey },
-    model,
-    workspaceRoot,
-    permissions: DEFAULT_PERMISSION_POLICY,
-  },
-  approvalHandler,
-);
+const session = createSession({
+  provider: { name: "cli", baseURL, apiKey },
+  model,
+  workspaceRoot,
+  permissions: DEFAULT_RULESET,
+});
 
 console.log(`\ncozycode → ${model} @ ${baseURL}\nworkspace: ${workspaceRoot}\n`);
 
@@ -82,6 +64,26 @@ const consume = (async () => {
           `   ${event.isError ? "✗" : "✓"} ${event.toolName} → ${truncate(JSON.stringify(event.result))}`,
         );
         break;
+      case "permission-asked": {
+        const req = event.request;
+        const summary = typeof req.metadata.summary === "string" ? req.metadata.summary : "";
+        const alwaysLabel = req.always.length ? ` / [a]lways ("${req.always.join('", "')}")` : "";
+        const answer = (
+          await rl.question(
+            `\n⚠️  Approve ${req.permission}? ${summary}\n   [y]es${alwaysLabel} / [n]o: `,
+          )
+        )
+          .trim()
+          .toLowerCase();
+        if ((answer === "a" || answer === "always") && req.always.length) {
+          session.replyPermission(req.id, "always");
+        } else if (answer === "y" || answer === "yes") {
+          session.replyPermission(req.id, "once");
+        } else {
+          session.replyPermission(req.id, "reject");
+        }
+        break;
+      }
       case "error":
         console.error(`\n❌ ${event.message}`);
         break;

@@ -3,16 +3,16 @@ import { useApp } from "./store/app-store";
 import { useGlobalShortcuts } from "./lib/shortcuts";
 import { AppLayout } from "./layout/AppLayout";
 import { SettingsDialog } from "./components/SettingsDialog";
-import { ApprovalModal } from "./components/ApprovalModal";
+import { PermissionModal } from "./components/PermissionModal";
 import { Help } from "./components/Help";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 export function App() {
   const loaded = useApp((s) => s.loaded);
-  const approval = useApp((s) => s.approval);
+  const permissionQueue = useApp((s) => s.permissionQueue);
   const helpOpen = useApp((s) => s.helpOpen);
   const setHelpOpen = useApp((s) => s.setHelpOpen);
-  const respondApproval = useApp((s) => s.respondApproval);
+  const replyPermission = useApp((s) => s.replyPermission);
 
   useGlobalShortcuts();
 
@@ -24,16 +24,12 @@ export function App() {
   // Subscribe to the main-process push streams for the app's lifetime.
   useEffect(() => {
     const offEvent = window.cozy.onEvent((event) => useApp.getState().applyEvent(event));
-    const offApproval = window.cozy.onApprovalRequest((req) =>
-      useApp.setState({ approval: req }),
-    );
     const offSessions = window.cozy.onSessionsChanged((sessions) =>
       useApp.setState({ sessions }),
     );
     const offExit = window.cozy.term.onExit((p) => useApp.getState().closeTerm(p.termId));
     return () => {
       offEvent();
-      offApproval();
       offSessions();
       offExit();
     };
@@ -51,7 +47,15 @@ export function App() {
     <TooltipProvider>
       <AppLayout />
       <SettingsDialog />
-      {approval && <ApprovalModal request={approval} onRespond={respondApproval} />}
+      {permissionQueue[0] && (
+        <PermissionModal
+          request={permissionQueue[0]}
+          queueLength={permissionQueue.length}
+          onReply={(reply, message) =>
+            replyPermission(permissionQueue[0]!.id, reply, message)
+          }
+        />
+      )}
       <Help open={helpOpen} onClose={() => setHelpOpen(false)} />
     </TooltipProvider>
   );

@@ -61,7 +61,7 @@ export function foldEvent(items: TranscriptItem[], event: SessionEvent): Transcr
         i === items.length - 1 && it.kind === "assistant" ? { ...it, streaming: false } : it,
       );
     default:
-      return items; // session-start, tool-approval, step-finish, mode-change are not rendered directly
+      return items; // session-start, permission-asked/replied, step-finish, mode-change are not rendered directly
   }
 }
 

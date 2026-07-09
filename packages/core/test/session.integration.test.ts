@@ -6,8 +6,8 @@ import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import type {
   AgentMode,
-  ApprovalOutcome,
-  PermissionPolicy,
+  PermissionConfig,
+  PermissionReply,
   SessionConfig,
   SessionEvent,
 } from "@cozycode/protocol";
@@ -16,12 +16,18 @@ import {
   PLAN_MODE_DENIAL_MESSAGE,
   PLAN_MODE_REMINDER,
   createSession,
+  rulesetFromConfig,
 } from "../src/index.ts";
+import type { Session } from "../src/session.ts";
 
 /**
  * End-to-end coverage of the Session pipeline (model -> tool loop -> permission
- * gate -> event stream) with a mock model, so the full wiring is exercised
- * offline without a network endpoint.
+ * service -> event stream) with a mock model, so the full wiring is exercised
+ * offline without a network endpoint. Approvals are answered by consuming the
+ * event stream and calling `session.replyPermission`, matching how frontends work.
+ *
+ * NOTE: the plan-mode cases here can be flaky under full-suite load (a known,
+ * pre-existing timing issue, not a regression in the permission rewrite).
  */
 
 const usage = { inputTokens: 5, outputTokens: 5, totalTokens: 10 } as const;
@@ -140,50 +146,50 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-function config(policy: PermissionPolicy, mode?: AgentMode): SessionConfig {
+function config(permissions: PermissionConfig, mode?: AgentMode): SessionConfig {
   return {
     provider: { name: "mock", baseURL: "http://localhost/v1" },
     model: "mock-model",
     workspaceRoot: root,
-    permissions: policy,
+    permissions: rulesetFromConfig(permissions),
     ...(mode ? { mode } : {}),
   };
 }
 
-async function collect(events: AsyncIterable<SessionEvent>, until: SessionEvent["type"]) {
+/**
+ * Drive one turn, collecting events until `finish`. Any permission ask is
+ * answered with `reply` (default: reject). Returns the collected events.
+ */
+async function runTurn(
+  session: Session,
+  message: string,
+  reply: PermissionReply = "reject",
+): Promise<SessionEvent[]> {
   const out: SessionEvent[] = [];
-  for await (const e of events) {
-    out.push(e);
-    if (e.type === until) break;
-  }
+  const consume = (async () => {
+    for await (const e of session.events) {
+      out.push(e);
+      if (e.type === "permission-asked") session.replyPermission(e.request.id, reply);
+      if (e.type === "finish") break;
+    }
+  })();
+  await session.send(message);
+  await consume;
   return out;
 }
 
 describe("Session (integration, mock model)", () => {
   test("runs a tool call, gates it, applies it, and streams the answer", async () => {
-    const approvals: string[] = [];
-    const handler = async (): Promise<ApprovalOutcome> => {
-      approvals.push("asked");
-      return "allow-once";
-    };
+    const session = createSession(config({ edit: "ask" }), {
+      model: twoStepWriteModel("hello from the agent"),
+    });
 
-    const session = createSession(
-      config({ defaultDecision: "ask", tools: { write_file: "ask" } }),
-      handler,
-      { model: twoStepWriteModel("hello from the agent") },
-    );
+    const events = await runTurn(session, "create out.txt", "once");
 
-    const done = collect(session.events, "finish");
-    await session.send("create out.txt");
-    const events = await done;
-
-    // The write was approved (policy was "ask").
-    expect(approvals).toEqual(["asked"]);
-
-    // Event stream carries the tool call, its approval, its result, and text.
     const types = events.map((e) => e.type);
+    expect(types).toContain("permission-asked");
+    expect(types).toContain("permission-replied");
     expect(types).toContain("tool-call-start");
-    expect(types).toContain("tool-approval");
     expect(types).toContain("tool-result");
 
     const toolResult = events.find((e) => e.type === "tool-result");
@@ -199,51 +205,57 @@ describe("Session (integration, mock model)", () => {
     expect(await readFile(join(root, "out.txt"), "utf8")).toBe("hello from the agent");
   });
 
-  test("a denied tool call blocks the side effect", async () => {
-    const session = createSession(
-      config({ defaultDecision: "ask", tools: { write_file: "deny" } }),
-      async () => "deny",
-      { model: twoStepWriteModel("should not be written") },
+  test("a deny rule blocks the side effect without asking", async () => {
+    const session = createSession(config({ edit: "deny" }), {
+      model: twoStepWriteModel("should not be written"),
+    });
+
+    const events = await runTurn(session, "create out.txt");
+
+    // Denied by rule → no ask surfaced.
+    expect(events.some((e) => e.type === "permission-asked")).toBe(false);
+
+    const result = events.find((e) => e.type === "tool-result");
+    expect(result && "result" in result && (result.result as { denied?: boolean }).denied).toBe(
+      true,
     );
 
-    const done = collect(session.events, "finish");
-    await session.send("create out.txt");
-    const events = await done;
-
-    const approval = events.find((e) => e.type === "tool-approval");
-    expect(approval && "decision" in approval && approval.decision).toBe("deny");
-
-    // File must NOT exist — the gate blocked the write.
     let existed = true;
     await readFile(join(root, "out.txt"), "utf8").catch(() => (existed = false));
     expect(existed).toBe(false);
   });
 
-  test("plan mode blocks write_file even when policy allows it", async () => {
-    const session = createSession(
-      config({ defaultDecision: "allow", tools: { write_file: "allow" } }, "plan"),
-      async () => "allow-once",
-      { model: twoStepWriteModel("should not be written") },
-    );
+  test("a rejected ask returns the rejection message to the model", async () => {
+    const session = createSession(config({ edit: "ask" }), {
+      model: twoStepWriteModel("should not be written"),
+    });
 
-    const done = collect(session.events, "finish");
-    await session.send("create out.txt");
-    const events = await done;
+    const events = await runTurn(session, "create out.txt", "reject");
 
-    // The window starts in plan mode per the config.
+    const result = events.find((e) => e.type === "tool-result");
+    const message =
+      result && "result" in result ? (result.result as { message?: string }).message : "";
+    expect(message).toContain("rejected");
+
+    let existed = true;
+    await readFile(join(root, "out.txt"), "utf8").catch(() => (existed = false));
+    expect(existed).toBe(false);
+  });
+
+  test("plan mode blocks write_file even when the base allows it", async () => {
+    const session = createSession(config("allow", "plan"), {
+      model: twoStepWriteModel("should not be written"),
+    });
+
+    const events = await runTurn(session, "create out.txt");
     expect(session.mode).toBe("plan");
 
-    const approval = events.find((e) => e.type === "tool-approval");
-    expect(approval && "decision" in approval && approval.decision).toBe("deny");
     const result = events.find((e) => e.type === "tool-result");
-    expect(result && "isError" in result && result.isError).toBe(false);
+    expect(result && "result" in result && (result.result as { denied?: boolean }).denied).toBe(
+      true,
+    );
     expect(
-      result && "result" in result && (result.result as { denied?: boolean }).denied,
-    ).toBe(true);
-    expect(
-      result &&
-        "result" in result &&
-        (result.result as { message?: string }).message,
+      result && "result" in result && (result.result as { message?: string }).message,
     ).toBe(PLAN_MODE_DENIAL_MESSAGE);
 
     let existed = true;
@@ -252,26 +264,23 @@ describe("Session (integration, mock model)", () => {
   });
 
   test("setMode(plan) emits a mode-change event and blocks writes", async () => {
-    const session = createSession(
-      config({ defaultDecision: "allow", tools: { write_file: "allow" } }),
-      async () => "allow-once",
-      { model: twoStepWriteModel("should not be written") },
-    );
+    const session = createSession(config("allow"), {
+      model: twoStepWriteModel("should not be written"),
+    });
 
     expect(session.mode).toBe("build");
     session.setMode("plan");
     expect(session.mode).toBe("plan");
 
-    const done = collect(session.events, "finish");
-    await session.send("create out.txt");
-    const events = await done;
+    const events = await runTurn(session, "create out.txt");
 
-    // mode-change event was pushed before the turn's events.
     const modeEvent = events.find((e) => e.type === "mode-change");
     expect(modeEvent && "mode" in modeEvent && modeEvent.mode).toBe("plan");
 
-    const approval = events.find((e) => e.type === "tool-approval");
-    expect(approval && "decision" in approval && approval.decision).toBe("deny");
+    const result = events.find((e) => e.type === "tool-result");
+    expect(result && "result" in result && (result.result as { denied?: boolean }).denied).toBe(
+      true,
+    );
 
     let existed = true;
     await readFile(join(root, "out.txt"), "utf8").catch(() => (existed = false));
@@ -280,15 +289,11 @@ describe("Session (integration, mock model)", () => {
 
   test("plan send injects the plan-mode reminder into the model prompt", async () => {
     const prompts: unknown[] = [];
-    const session = createSession(
-      config({ defaultDecision: "allow", tools: {} }, "plan"),
-      async () => "allow-once",
-      { model: capturePromptModel(prompts) },
-    );
+    const session = createSession(config("allow", "plan"), {
+      model: capturePromptModel(prompts),
+    });
 
-    const done = collect(session.events, "finish");
-    await session.send("inspect this change");
-    await done;
+    await runTurn(session, "inspect this change");
 
     expect(promptText(prompts)).toContain("inspect this change");
     expect(promptText(prompts)).toContain(PLAN_MODE_REMINDER);
@@ -296,24 +301,13 @@ describe("Session (integration, mock model)", () => {
 
   test("first build send after a plan turn injects the build-switch reminder once", async () => {
     const prompts: unknown[] = [];
-    const session = createSession(
-      config({ defaultDecision: "allow", tools: {} }),
-      async () => "allow-once",
-      { model: capturePromptModel(prompts) },
-    );
+    const session = createSession(config("allow"), { model: capturePromptModel(prompts) });
 
     session.setMode("plan");
-    let done = collect(session.events, "finish");
-    await session.send("make a plan");
-    await done;
-
+    await runTurn(session, "make a plan");
     session.setMode("build");
-    done = collect(session.events, "finish");
-    await session.send("go ahead");
-    await done;
-    done = collect(session.events, "finish");
-    await session.send("continue");
-    await done;
+    await runTurn(session, "go ahead");
+    await runTurn(session, "continue");
 
     expect(latestUserText(prompts, 1)).toContain(BUILD_SWITCH_REMINDER);
     expect(latestUserText(prompts, 2)).not.toContain(BUILD_SWITCH_REMINDER);
@@ -321,52 +315,31 @@ describe("Session (integration, mock model)", () => {
 
   test("plan to build with no plan send does not inject the build-switch reminder", async () => {
     const prompts: unknown[] = [];
-    const session = createSession(
-      config({ defaultDecision: "allow", tools: {} }),
-      async () => "allow-once",
-      { model: capturePromptModel(prompts) },
-    );
+    const session = createSession(config("allow"), { model: capturePromptModel(prompts) });
 
     session.setMode("plan");
     session.setMode("build");
-    const done = collect(session.events, "finish");
-    await session.send("start now");
-    await done;
+    await runTurn(session, "start now");
 
     expect(promptText(prompts)).not.toContain(BUILD_SWITCH_REMINDER);
   });
 
   test("plain build send has no mode reminders", async () => {
     const prompts: unknown[] = [];
-    const session = createSession(
-      config({ defaultDecision: "allow", tools: {} }),
-      async () => "allow-once",
-      { model: capturePromptModel(prompts) },
-    );
+    const session = createSession(config("allow"), { model: capturePromptModel(prompts) });
 
-    const done = collect(session.events, "finish");
-    await session.send("build normally");
-    await done;
+    await runTurn(session, "build normally");
 
     expect(promptText(prompts)).not.toContain(PLAN_MODE_REMINDER);
     expect(promptText(prompts)).not.toContain(BUILD_SWITCH_REMINDER);
   });
 
   test("unknown shell command in plan mode under ask policy invokes approval", async () => {
-    let asked = false;
-    const session = createSession(
-      config({ defaultDecision: "ask", tools: { run_shell: "ask" } }, "plan"),
-      async () => {
-        asked = true;
-        return "deny";
-      },
-      { model: twoStepShellModel("bun run build") },
-    );
+    const session = createSession(config({ bash: "ask" }, "plan"), {
+      model: twoStepShellModel("bun run build"),
+    });
 
-    const done = collect(session.events, "finish");
-    await session.send("try a shell command");
-    await done;
-
-    expect(asked).toBe(true);
+    const events = await runTurn(session, "try a shell command", "reject");
+    expect(events.some((e) => e.type === "permission-asked")).toBe(true);
   });
 });

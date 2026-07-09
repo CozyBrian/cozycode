@@ -9,9 +9,8 @@ import {
 } from "@cozycode/commands";
 import type {
   AgentMode,
-  ApprovalHandler,
-  ApprovalOutcome,
-  ApprovalRequest,
+  PermissionReply,
+  PermissionRequest,
   SessionConfig,
   TokenUsage,
 } from "@cozycode/protocol";
@@ -50,7 +49,7 @@ export function App({ config, model: initialModel, workspaceRoot, sessionOptions
   const dimensions = useTerminalDimensions();
   const [history, setHistory] = useState<RenderItem[]>([]);
   const [busy, setBusy] = useState(false);
-  const [approval, setApproval] = useState<ApprovalRequest | null>(null);
+  const [permissionQueue, setPermissionQueue] = useState<PermissionRequest[]>([]);
   const [usage, setUsage] = useState<TokenUsage | undefined>();
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [inputKey, setInputKey] = useState(0);
@@ -63,19 +62,13 @@ export function App({ config, model: initialModel, workspaceRoot, sessionOptions
   const turnRef = useRef<RenderItem[]>([]);
   const [, bump] = useReducer((x: number) => x + 1, 0);
   const sessionRef = useRef<Session | null>(null);
-  const approvalResolver = useRef<((o: ApprovalOutcome) => void) | null>(null);
   // Tracks the live model so a fresh session (after /new) keeps the selection.
   const modelRef = useRef(initialModel);
   // Tracks the live mode so a fresh session (after /new) keeps the selection.
   const modeRef = useRef<AgentMode>(config.mode ?? "build");
 
   const startSession = () => {
-    const handler: ApprovalHandler = (req) =>
-      new Promise<ApprovalOutcome>((resolve) => {
-        approvalResolver.current = resolve;
-        setApproval(req);
-      });
-    const session = createSession(config, handler, sessionOptions);
+    const session = createSession(config, sessionOptions);
     if (modelRef.current !== config.model) session.setModel(modelRef.current);
     if (modeRef.current !== (config.mode ?? "build")) session.setMode(modeRef.current);
     sessionRef.current = session;
@@ -91,6 +84,10 @@ export function App({ config, model: initialModel, workspaceRoot, sessionOptions
         if (event.type === "mode-change") {
           modeRef.current = event.mode;
           setMode(event.mode);
+        } else if (event.type === "permission-asked") {
+          setPermissionQueue((q) => [...q, event.request]);
+        } else if (event.type === "permission-replied") {
+          setPermissionQueue((q) => q.filter((r) => r.id !== event.requestId));
         } else if (event.type === "finish") {
           setUsage(event.usage);
           flush();
@@ -152,8 +149,7 @@ export function App({ config, model: initialModel, workspaceRoot, sessionOptions
   const resetChat = () => {
     sessionRef.current?.close();
     sessionRef.current = null;
-    approvalResolver.current = null;
-    setApproval(null);
+    setPermissionQueue([]);
     setBusy(false);
     setHistory([]);
     turnRef.current = [];
@@ -220,14 +216,17 @@ export function App({ config, model: initialModel, workspaceRoot, sessionOptions
     setInputKey((k) => k + 1);
   };
 
-  const respond = (outcome: ApprovalOutcome) => {
-    approvalResolver.current?.(outcome);
-    approvalResolver.current = null;
-    setApproval(null);
+  const respond = (reply: PermissionReply, message?: string) => {
+    const front = permissionQueue[0];
+    if (!front) return;
+    sessionRef.current?.replyPermission(front.id, reply, message);
+    // Optimistic; the replied event will also drop it (idempotent).
+    setPermissionQueue((q) => q.slice(1));
   };
 
   const items = [...history, ...turnRef.current];
   const rows = dimensions.height || 0;
+  const approval = permissionQueue[0] ?? null;
   const showHome = items.length === 0 && !busy && !approval && !overlay;
 
   return (
@@ -257,8 +256,8 @@ export function App({ config, model: initialModel, workspaceRoot, sessionOptions
             />
           ) : null}
           <box flexShrink={0} flexDirection="column" marginTop={1}>
-            {approval ? <ApprovalPrompt request={approval} onRespond={respond} /> : <Prompt busy={busy} inputKey={inputKey} model={model} mode={mode} workspaceRoot={workspaceRoot} usage={usage} onSubmit={submit} onToggleMode={toggleMode} />}
-            <StatusFooter model={model} mode={mode} workspaceRoot={workspaceRoot} busy={busy} approvals={approval ? 1 : 0} />
+            {approval ? <ApprovalPrompt request={approval} queueLength={permissionQueue.length} onRespond={respond} /> : <Prompt busy={busy} inputKey={inputKey} model={model} mode={mode} workspaceRoot={workspaceRoot} usage={usage} onSubmit={submit} onToggleMode={toggleMode} />}
+            <StatusFooter model={model} mode={mode} workspaceRoot={workspaceRoot} busy={busy} approvals={permissionQueue.length} />
           </box>
         </box>
         {sidebarVisible ? (
