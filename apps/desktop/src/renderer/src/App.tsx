@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 import { preloadHighlighter } from "@pierre/diffs";
 import { useApp } from "./store/app-store";
 import { useGlobalShortcuts } from "./lib/shortcuts";
@@ -7,6 +8,7 @@ import { SettingsPage } from "./components/SettingsPage";
 import { PermissionModal } from "./components/PermissionModal";
 import { Help } from "./components/Help";
 import { TextShimmer } from "./components/TextShimmer";
+import { TitleControls } from "./layout/TitleBar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 export function App() {
@@ -58,6 +60,12 @@ export function App() {
 
   return (
     <TooltipProvider>
+      {createPortal(
+        <div className="fixed top-0 left-0 z-50 app-no-drag flex h-12 items-center">
+          <TitleControls />
+        </div>,
+        document.body,
+      )}
       {settingsOpen ? <SettingsPage /> : <AppLayout />}
       {permissionQueue[0] && (
         <PermissionModal

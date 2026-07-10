@@ -41,7 +41,7 @@ export function TitleControls() {
   const toggleSidebar = useApp((s) => s.toggleSidebar);
 
   return (
-    <div className="flex items-center gap-1 pl-18">
+    <div className="flex items-center gap-1 pl-22">
       <IconButton label="Toggle sidebar  ⌘B" onClick={toggleSidebar} active={sidebarOpen}>
         <PanelLeft className="size-4" />
       </IconButton>
@@ -56,9 +56,5 @@ export function TitleControls() {
 }
 
 export function TitleBar() {
-  return (
-    <header className="app-drag flex h-12 w-full shrink-0 items-center px-3">
-      <TitleControls />
-    </header>
-  );
+  return <header className="app-drag flex h-12 w-full shrink-0 items-center px-3" />;
 }
