@@ -22,7 +22,10 @@ export type {
 } from "@cozycode/protocol";
 
 export interface AppSettings {
+  /** Last-used workspace; the global New chat action uses this root. */
   workspaceRoot: string;
+  /** Ordered project roots displayed in the sidebar. */
+  openWorkspaceRoots?: string[];
   permissions?: PermissionConfig;
   /** MRU model refs, newest first. */
   recentModels?: ModelRef[];

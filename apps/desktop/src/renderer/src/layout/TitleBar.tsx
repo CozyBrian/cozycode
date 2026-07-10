@@ -39,16 +39,24 @@ function IconButton({
 export function TitleControls() {
   const sidebarOpen = useApp((s) => s.sidebarOpen);
   const toggleSidebar = useApp((s) => s.toggleSidebar);
+  const subagentHistoryIndex = useApp((s) => s.subagentHistoryIndex);
+  const subagentHistory = useApp((s) => s.subagentHistory);
+  const navigateSubagentBack = useApp((s) => s.navigateSubagentBack);
+  const navigateSubagentForward = useApp((s) => s.navigateSubagentForward);
 
   return (
     <div className="flex items-center gap-1 pl-22">
       <IconButton label="Toggle sidebar  ⌘B" onClick={toggleSidebar} active={sidebarOpen}>
         <PanelLeft className="size-4" />
       </IconButton>
-      <IconButton label="Back" disabled>
+      <IconButton label="Back" onClick={navigateSubagentBack} disabled={subagentHistoryIndex === 0}>
         <ChevronLeft className="size-4" />
       </IconButton>
-      <IconButton label="Forward" disabled>
+      <IconButton
+        label="Forward"
+        onClick={navigateSubagentForward}
+        disabled={subagentHistoryIndex === subagentHistory.length - 1}
+      >
         <ChevronRight className="size-4" />
       </IconButton>
     </div>

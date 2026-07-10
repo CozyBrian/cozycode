@@ -1,14 +1,9 @@
 import { useState } from "react";
-import { MessageSquare, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import { MessageSquare, Pencil, Trash2 } from "lucide-react";
 import type { SessionMeta } from "../../../shared/ipc.ts";
 import { useApp } from "../store/app-store";
 import { relativeTime } from "../lib/relative-time";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
 
 export function SidebarSessionRow({ session, now }: { session: SessionMeta; now: number }) {
@@ -29,68 +24,55 @@ export function SidebarSessionRow({ session, now }: { session: SessionMeta; now:
   };
 
   return (
-    <div
-      className={cn(
-        "group flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-sidebar-foreground/80 transition-colors",
-        active ? "bg-sidebar-accent text-sidebar-foreground" : "hover:bg-white/5",
-      )}
-      onClick={() => !editing && void activate(session.id)}
-    >
-      <MessageSquare className="size-3.5 shrink-0 text-muted-foreground" />
-      {editing ? (
-        <input
-          autoFocus
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") commit();
-            if (e.key === "Escape") {
-              setDraft(session.title);
-              setEditing(false);
-            }
-          }}
-          className="app-no-drag min-w-0 flex-1 rounded bg-white/10 px-1 py-0.5 text-sm outline-none ring-1 ring-ring"
-          onClick={(e) => e.stopPropagation()}
-        />
-      ) : (
-        <>
-          <span className="min-w-0 flex-1 truncate">{session.title}</span>
-          <span className="shrink-0 text-xs text-muted-foreground group-hover:hidden">
-            {relativeTime(session.updatedAt, now)}
-          </span>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => e.stopPropagation()}
-                className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-white/10 hover:text-foreground group-hover:opacity-100 data-[state=open]:opacity-100"
-              >
-                <MoreHorizontal className="size-4" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              side="bottom"
-              align="end"
-              sideOffset={6}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <DropdownMenuItem
-                onSelect={() => {
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          className={cn(
+            "group flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-sidebar-foreground/80 transition-colors",
+            active ? "bg-sidebar-accent text-sidebar-foreground" : "hover:bg-white/5",
+          )}
+          onClick={() => !editing && void activate(session.id)}
+        >
+          <MessageSquare className="size-3.5 shrink-0 text-muted-foreground" />
+          {editing ? (
+            <input
+              autoFocus
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={commit}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commit();
+                if (e.key === "Escape") {
                   setDraft(session.title);
-                  setEditing(true);
-                }}
-              >
-                <Pencil className="size-4" /> Rename
-              </DropdownMenuItem>
-              <DropdownMenuItem variant="destructive" onSelect={() => void remove(session.id)}>
-                <Trash2 className="size-4" /> Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </>
-      )}
-    </div>
+                  setEditing(false);
+                }
+              }}
+              className="app-no-drag min-w-0 flex-1 rounded bg-white/10 px-1 py-0.5 text-sm outline-none ring-1 ring-ring"
+              onClick={(e) => e.stopPropagation()}
+            />
+          ) : (
+            <>
+              <span className="min-w-0 flex-1 truncate">{session.title}</span>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {relativeTime(session.updatedAt, now)}
+              </span>
+            </>
+          )}
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem
+          onSelect={() => {
+            setDraft(session.title);
+            setEditing(true);
+          }}
+        >
+          <Pencil className="size-4" /> Rename
+        </ContextMenuItem>
+        <ContextMenuItem variant="destructive" onSelect={() => void remove(session.id)}>
+          <Trash2 className="size-4" /> Delete
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }

@@ -1,10 +1,14 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import { FolderClosed, Search as SearchIcon, SquarePen } from "lucide-react";
+import { FolderClosed, FolderOpen, Search as SearchIcon, SquarePen, Trash2 } from "lucide-react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useApp } from "../store/app-store";
 import type { SessionMeta } from "../../../shared/ipc.ts";
 import { SidebarSessionRow } from "./SidebarSessionRow";
 import { SidebarFooter } from "./SidebarFooter";
 import { TitleBar } from "./TitleBar";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 function ActionRow({
@@ -43,9 +47,14 @@ export function Sidebar() {
   const width = useApp((s) => s.sidebarWidth);
   const setWidth = useApp((s) => s.setSidebarWidth);
   const sessions = useApp((s) => s.sessions);
+  const settings = useApp((s) => s.settings);
   const createSession = useApp((s) => s.createSession);
+  const openWorkspace = useApp((s) => s.openWorkspace);
+  const removeWorkspace = useApp((s) => s.removeWorkspace);
   const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState("");
+  const [collapsedRoots, setCollapsedRoots] = useState<Set<string>>(() => new Set());
+  const [projectPendingRemoval, setProjectPendingRemoval] = useState<{ root: string; sessionCount: number } | null>(null);
   const now = Date.now();
 
   const asideRef = useRef<HTMLElement>(null);
@@ -58,7 +67,7 @@ export function Sidebar() {
     return q ? top.filter((s) => s.title.toLowerCase().includes(q)) : top;
   }, [sessions, query]);
 
-  const { projects, chats } = useMemo(() => {
+  const { projectSessions, chats } = useMemo(() => {
     const byProject = new Map<string, SessionMeta[]>();
     const standalone: SessionMeta[] = [];
     for (const s of filtered) {
@@ -70,8 +79,47 @@ export function Sidebar() {
         standalone.push(s);
       }
     }
-    return { projects: [...byProject.entries()], chats: standalone };
+    return { projectSessions: byProject, chats: standalone };
   }, [filtered]);
+
+  const projectSessionCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const session of sessions) {
+      if (!session.parentID && session.workspaceRoot) {
+        counts.set(session.workspaceRoot, (counts.get(session.workspaceRoot) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [sessions]);
+
+  const openRoots = settings?.openWorkspaceRoots ?? (settings?.workspaceRoot ? [settings.workspaceRoot] : []);
+  const projects = openRoots.map((root) => ({ root, sessions: projectSessions.get(root) ?? [] }));
+  const otherProjects = [...projectSessions.entries()]
+    .filter(([root]) => !openRoots.includes(root))
+    .map(([root, projectSessions]) => ({ root, sessions: projectSessions }));
+
+  const toggleProject = (root: string) => {
+    setCollapsedRoots((current) => {
+      const next = new Set(current);
+      if (next.has(root)) next.delete(root);
+      else next.add(root);
+      return next;
+    });
+  };
+
+  const requestRemoveProject = (root: string, sessionCount: number) => {
+    if (sessionCount === 0) {
+      void removeWorkspace(root);
+      return;
+    }
+    setProjectPendingRemoval({ root, sessionCount });
+  };
+
+  const confirmRemoveProject = async () => {
+    if (!projectPendingRemoval) return;
+    await removeWorkspace(projectPendingRemoval.root);
+    setProjectPendingRemoval(null);
+  };
 
   const onResizeStart = useCallback(
     (e: React.PointerEvent) => {
@@ -108,6 +156,7 @@ export function Sidebar() {
             label="New chat"
             onClick={() => void createSession()}
           />
+          <ActionRow icon={<FolderOpen />} label="Open project" onClick={() => void openWorkspace()} />
           <ActionRow
             icon={<SearchIcon />}
             label="Search"
@@ -129,20 +178,43 @@ export function Sidebar() {
         )}
 
         {/* Scrollable session list */}
-        <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-2">
-          {projects.map(([root, list]) => (
-            <div key={root} className="mt-3">
-              <div className="flex items-center gap-1.5 px-2 pb-1 text-xs font-medium text-muted-foreground">
-                <FolderClosed className="size-3.5" />
-                <span className="truncate">{projectName(root)}</span>
-              </div>
-              <div className="flex flex-col gap-0.5">
-                {list.map((s) => (
-                  <SidebarSessionRow key={s.id} session={s} now={now} />
-                ))}
-              </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-2 mt-3">
+          {projects.map((project) => {
+            const collapsed = collapsedRoots.has(project.root);
+            return (
+              <ProjectGroup
+                key={project.root}
+                root={project.root}
+                sessions={project.sessions}
+                now={now}
+                collapsed={collapsed}
+                canRemove={openRoots.length > 1}
+                onToggle={() => toggleProject(project.root)}
+                onRemove={() => requestRemoveProject(project.root, projectSessionCounts.get(project.root) ?? 0)}
+              />
+            );
+          })}
+
+          {otherProjects.length > 0 && (
+            <div className="mt-4">
+              <div className="px-2 pb-1 text-xs font-medium text-muted-foreground">Other projects</div>
+              {otherProjects.map((project) => {
+                const collapsed = collapsedRoots.has(project.root);
+                return (
+                  <ProjectGroup
+                    key={project.root}
+                    root={project.root}
+                    sessions={project.sessions}
+                    now={now}
+                    collapsed={collapsed}
+                    canRemove={false}
+                    onToggle={() => toggleProject(project.root)}
+                    onRemove={() => {}}
+                  />
+                );
+              })}
             </div>
-          ))}
+          )}
 
           {chats.length > 0 && (
             <div className="mt-3">
@@ -164,6 +236,20 @@ export function Sidebar() {
 
         <SidebarFooter />
       </div>
+      <Dialog open={Boolean(projectPendingRemoval)} onOpenChange={(open) => !open && setProjectPendingRemoval(null)}>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Remove {projectPendingRemoval ? projectName(projectPendingRemoval.root) : "project"}?</DialogTitle>
+            <DialogDescription>
+              {projectPendingRemoval?.sessionCount} {projectPendingRemoval?.sessionCount === 1 ? "session is" : "sessions are"} retained and will appear under Other projects.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setProjectPendingRemoval(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={() => void confirmRemoveProject()}>Remove project</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {/* Resize handle */}
       {open ? (
         <div
@@ -174,5 +260,65 @@ export function Sidebar() {
       {/* Border sits inside the clippable area so it disappears when collapsed */}
       <div className="pointer-events-none absolute inset-y-0 right-0 w-px bg-sidebar-border" />
     </aside>
+  );
+}
+
+function ProjectGroup({
+  root,
+  sessions,
+  now,
+  collapsed,
+  canRemove,
+  onToggle,
+  onRemove,
+}: {
+  root: string;
+  sessions: SessionMeta[];
+  now: number;
+  collapsed: boolean;
+  canRemove: boolean;
+  onToggle: () => void;
+  onRemove: () => void;
+}) {
+  const shouldReduceMotion = useReducedMotion();
+  return (
+    <div className="">
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={!collapsed}
+            className="app-no-drag flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-sidebar-foreground/80 transition-colors hover:bg-white/5"
+          >
+            <FolderClosed className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="truncate">{projectName(root)}</span>
+          </button>
+        </ContextMenuTrigger>
+        {canRemove ? (
+          <ContextMenuContent>
+            <ContextMenuItem variant="destructive" onSelect={onRemove}>
+              <Trash2 className="size-4" /> Remove project
+            </ContextMenuItem>
+          </ContextMenuContent>
+        ) : null}
+      </ContextMenu>
+      <AnimatePresence initial={false}>
+        {!collapsed && (
+          <motion.div
+            initial={shouldReduceMotion ? { opacity: 0 } : { height: 0, opacity: 0 }}
+            animate={shouldReduceMotion ? { opacity: 1 } : { height: "auto", opacity: 1 }}
+            exit={shouldReduceMotion ? { opacity: 0 } : { height: 0, opacity: 0 }}
+            transition={{ duration: shouldReduceMotion ? 0.12 : 0.18, ease: [0.23, 1, 0.32, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="ml-3 flex flex-col gap-0.5 pl-2">
+              {sessions.map((session) => <SidebarSessionRow key={session.id} session={session} now={now} />)}
+              {sessions.length === 0 && <div className="px-2 py-1 text-xs text-muted-foreground">No chats yet</div>}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }

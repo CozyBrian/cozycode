@@ -43,24 +43,10 @@ export function mergeRulesets(...rulesets: Ruleset[]): Ruleset {
  */
 export const PLAN_RULESET: Ruleset = rulesetFromConfig({ edit: "deny" });
 
-/**
- * Safe-by-default ruleset. Reading and searching run freely; edits and shell
- * commands ask, except for a curated set of read-only shell commands (the old
- * shell-safety allowlist) that are allowed outright. Users override any of this
- * via config, which is merged last.
- */
-export const DEFAULT_RULESET: Ruleset = rulesetFromConfig({
-  "*": "ask",
-  read: "allow",
-  search: "allow",
-  edit: "ask",
-  // Delegating to a subagent is allowed by default (overridable to ask/deny).
-  task: "allow",
-  // Maintaining the todo checklist is harmless bookkeeping — never prompt.
-  todowrite: "allow",
+/** Curated shell commands that do not mutate the workspace or external state. */
+export const READONLY_BASH_RULESET: Ruleset = rulesetFromConfig({
   bash: {
-    "*": "ask",
-    // read-only / non-mutating programs
+    // Read-only / non-mutating programs.
     "pwd *": "allow",
     "ls *": "allow",
     "tree *": "allow",
@@ -114,6 +100,26 @@ export const DEFAULT_RULESET: Ruleset = rulesetFromConfig({
     "yarn run typecheck *": "allow",
   },
 });
+
+/**
+ * Safe-by-default ruleset. Reading and searching run freely; edits and shell
+ * commands ask, except for a curated set of read-only shell commands that are
+ * allowed outright. Users override any of this via config, which is merged last.
+ */
+export const DEFAULT_RULESET: Ruleset = mergeRulesets(
+  rulesetFromConfig({
+    "*": "ask",
+    read: "allow",
+    search: "allow",
+    edit: "ask",
+    // Delegating to a subagent is allowed by default (overridable to ask/deny).
+    task: "allow",
+    // Maintaining the todo checklist is harmless bookkeeping — never prompt.
+    todowrite: "allow",
+    bash: "ask",
+  }),
+  READONLY_BASH_RULESET,
+);
 
 /** Full-access ruleset: everything allowed (the "full" desktop preset). */
 export const FULL_ACCESS_RULESET: Ruleset = mergeRulesets(

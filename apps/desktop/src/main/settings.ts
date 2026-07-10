@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AuthStore, ProviderRegistry } from "@cozycode/core";
 import type { AppSettings, AppSettingsInput } from "../shared/ipc.ts";
+import { workspaceRoots } from "../shared/workspaces.ts";
 
 interface StoredSettings extends Partial<AppSettings> {
   providerName?: string;
@@ -29,18 +30,28 @@ export class SettingsStore {
     if (this.cache !== undefined) return this.cache;
     const stored = await this.readStored();
     if (!stored?.workspaceRoot) return (this.cache = null);
-    return (this.cache = {
+    const roots = workspaceRoots(stored.workspaceRoot, stored.openWorkspaceRoots);
+    const settings: AppSettings = {
       workspaceRoot: stored.workspaceRoot,
+      openWorkspaceRoots: roots,
       permissions: stored.permissions,
       recentModels: stored.recentModels,
       reasoningEfforts: stored.reasoningEfforts,
       showContextSize: stored.showContextSize,
-    });
+    };
+    this.cache = settings;
+    // Existing installations had one workspace root. Preserve it as their first
+    // project so the new sidebar can render a stable project list immediately.
+    if (!Array.isArray(stored.openWorkspaceRoots) || roots.length !== stored.openWorkspaceRoots.length) {
+      await this.save(settings);
+    }
+    return settings;
   }
 
   async save(input: AppSettingsInput): Promise<AppSettings> {
     const next: AppSettings = {
       workspaceRoot: input.workspaceRoot,
+      openWorkspaceRoots: workspaceRoots(input.workspaceRoot, input.openWorkspaceRoots),
       permissions: input.permissions,
       recentModels: input.recentModels?.slice(0, 8),
       reasoningEfforts: input.reasoningEfforts,
@@ -80,6 +91,7 @@ export class SettingsStore {
     }
     await this.save({
       workspaceRoot: stored.workspaceRoot || app.getPath("home"),
+      openWorkspaceRoots: stored.openWorkspaceRoots,
       permissions: stored.permissions,
       recentModels: stored.model
         ? [{ providerID: this.legacyProviderID, modelID: stored.model }]

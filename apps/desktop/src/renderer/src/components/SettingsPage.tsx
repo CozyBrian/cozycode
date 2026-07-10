@@ -5,6 +5,7 @@ import { ProvidersSection } from "./settings/ProvidersSection";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { workspaceRoots } from "../../../shared/workspaces.ts";
 
 const sections: Array<{ id: SettingsSection; label: string; icon: typeof SlidersHorizontal }> = [
   { id: "general", label: "General", icon: SlidersHorizontal },
@@ -38,6 +39,7 @@ export function SettingsPage() {
     try {
       const saved = await window.cozy.saveSettings({
         workspaceRoot,
+        openWorkspaceRoots: workspaceRoots(workspaceRoot, initial?.openWorkspaceRoots),
         permissions: initial?.permissions,
         recentModels: useApp.getState().recentModels,
         showContextSize,

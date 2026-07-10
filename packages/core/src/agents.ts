@@ -2,7 +2,8 @@ import { readFile, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type { AgentInfo, ModelRef, PermissionConfig, Ruleset } from "@cozycode/protocol";
-import { mergeRulesets, rulesetFromConfig } from "./permission/config.ts";
+import { mergeRulesets, READONLY_BASH_RULESET, rulesetFromConfig } from "./permission/config.ts";
+import { evaluateRule } from "./permission/service.ts";
 
 /** Read-only overlay for the built-in `explore` subagent: deny all but read + search. */
 export const EXPLORE_RULESET: Ruleset = rulesetFromConfig({
@@ -30,6 +31,16 @@ export const BUILTIN_AGENTS: AgentInfo[] = [
 ];
 
 /**
+ * Reapply safe shell commands after explore's catch-all deny, but only when the
+ * parent had already allowed them. This retains explicit parent denials.
+ */
+function exploreBashRules(parentBase: Ruleset): Ruleset {
+  return READONLY_BASH_RULESET.filter(
+    (rule) => evaluateRule(rule.permission, rule.pattern, parentBase).action === "allow",
+  );
+}
+
+/**
  * Derive the permission ruleset for a subagent's child session: inherit the
  * parent's base, overlay the read-only explore rules (for `explore`), overlay
  * the agent's own policy, and always deny `task` last so subagents can't spawn
@@ -39,6 +50,7 @@ export function deriveSubagentRuleset(parentBase: Ruleset, agent: AgentInfo): Ru
   return mergeRulesets(
     parentBase,
     agent.name === "explore" ? EXPLORE_RULESET : [],
+    agent.name === "explore" ? exploreBashRules(parentBase) : [],
     agent.permission ? rulesetFromConfig(agent.permission) : [],
     rulesetFromConfig({ task: "deny" }),
   );

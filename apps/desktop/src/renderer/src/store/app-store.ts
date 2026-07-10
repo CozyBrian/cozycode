@@ -16,6 +16,7 @@ import type {
 } from "../../../shared/ipc.ts";
 import { effortsForModel, modelKey, resolveEffort } from "@cozycode/commands";
 import { foldEvent, userItem, type TranscriptItem } from "../transcript.ts";
+import { emptySessionForWorkspace, workspaceRoots } from "../../../shared/workspaces.ts";
 
 interface TermTab {
   id: string; // pty id from main
@@ -45,6 +46,9 @@ export interface AppState {
   activeId: string | null;
   /** When set, the transcript shows a read-only view of this subagent (by child session id). */
   subagentView: string | null;
+  /** Drill-in routes for the active session; `null` represents its parent transcript. */
+  subagentHistory: Array<string | null>;
+  subagentHistoryIndex: number;
 
   // active chat
   items: TranscriptItem[];
@@ -82,9 +86,13 @@ export interface AppState {
   setEffortPickerOpen(open: boolean): void;
   setInput(v: string): void;
   setSettings(s: AppSettings): void;
+  openWorkspace(): Promise<void>;
+  removeWorkspace(root: string): Promise<void>;
 
   viewSubagent(sessionId: string): void;
   exitSubagent(): void;
+  navigateSubagentBack(): void;
+  navigateSubagentForward(): void;
 
   refreshSessions(): Promise<void>;
   createSession(workspaceRoot?: string | null): Promise<void>;
@@ -159,6 +167,8 @@ export const useApp = create<AppState>((set, get) => ({
   sessions: [],
   activeId: null,
   subagentView: null,
+  subagentHistory: [null],
+  subagentHistoryIndex: 0,
 
   items: [],
   busy: false,
@@ -242,25 +252,69 @@ export const useApp = create<AppState>((set, get) => ({
   setInput: (v) => set({ input: v }),
   setSettings: (s) => set({ settings: s }),
 
+  async openWorkspace() {
+    const root = await window.cozy.pickWorkspace();
+    const settings = get().settings;
+    if (!root || !settings) return;
+    const next = {
+      ...settings,
+      workspaceRoot: root,
+      openWorkspaceRoots: workspaceRoots(root, settings.openWorkspaceRoots),
+    };
+    set({ settings: next });
+    await window.cozy.saveSettings(next);
+  },
+
+  async removeWorkspace(root) {
+    const settings = get().settings;
+    if (!settings) return;
+    const openWorkspaceRoots = (settings.openWorkspaceRoots ?? [settings.workspaceRoot]).filter((item) => item !== root);
+    // Keep one project as the default target for global New chat.
+    if (openWorkspaceRoots.length === 0) return;
+    const next = {
+      ...settings,
+      workspaceRoot: settings.workspaceRoot === root ? openWorkspaceRoots[0]! : settings.workspaceRoot,
+      openWorkspaceRoots,
+    };
+    set({ settings: next });
+    await window.cozy.saveSettings(next);
+  },
+
   // Read-only drill-in into a running/finished subagent. Does NOT touch the live
   // main-process session, so the subagent keeps running in the background.
-  viewSubagent: (sessionId) => set({ subagentView: sessionId }),
-  exitSubagent: () => set({ subagentView: null }),
+  viewSubagent: (sessionId) =>
+    set((s) => {
+      if (s.subagentView === sessionId) return s;
+      const subagentHistory = [...s.subagentHistory.slice(0, s.subagentHistoryIndex + 1), sessionId];
+      return { subagentView: sessionId, subagentHistory, subagentHistoryIndex: subagentHistory.length - 1 };
+    }),
+  exitSubagent: () => get().navigateSubagentBack(),
+  navigateSubagentBack: () =>
+    set((s) => {
+      if (s.subagentHistoryIndex === 0) return s;
+      const subagentHistoryIndex = s.subagentHistoryIndex - 1;
+      return { subagentHistoryIndex, subagentView: s.subagentHistory[subagentHistoryIndex] ?? null };
+    }),
+  navigateSubagentForward: () =>
+    set((s) => {
+      if (s.subagentHistoryIndex === s.subagentHistory.length - 1) return s;
+      const subagentHistoryIndex = s.subagentHistoryIndex + 1;
+      return { subagentHistoryIndex, subagentView: s.subagentHistory[subagentHistoryIndex] ?? null };
+    }),
 
   async refreshSessions() {
     set({ sessions: await window.cozy.listSessions() });
   },
 
   async createSession(workspaceRoot) {
-    const empty = get().sessions.find((s) => s.messageCount === 0);
+    const root = workspaceRoot === undefined ? (get().settings?.workspaceRoot ?? null) : workspaceRoot;
+    const empty = emptySessionForWorkspace(get().sessions, root);
     if (empty) {
       if (empty.id !== get().activeId) await get().activateSession(empty.id);
       return;
     }
 
-    const snap = await window.cozy.createSession(
-      workspaceRoot !== undefined ? { workspaceRoot } : undefined,
-    );
+    const snap = await window.cozy.createSession({ workspaceRoot: root });
     set({
       activeId: snap.meta.id,
       items: replayRecords(snap.records),
@@ -272,7 +326,10 @@ export const useApp = create<AppState>((set, get) => ({
       permissionQueue: [],
       questionQueue: [],
       subagentView: null,
+      subagentHistory: [null],
+      subagentHistoryIndex: 0,
     });
+    await updateLastWorkspace(get, set, snap.meta.workspaceRoot);
     await get().refreshSessions();
   },
 
@@ -290,7 +347,10 @@ export const useApp = create<AppState>((set, get) => ({
       permissionQueue: [],
       questionQueue: [],
       subagentView: null,
+      subagentHistory: [null],
+      subagentHistoryIndex: 0,
     });
+    await updateLastWorkspace(get, set, snap.meta.workspaceRoot);
   },
 
   async deleteSession(id) {
@@ -304,8 +364,10 @@ export const useApp = create<AppState>((set, get) => ({
         effort: storedEffort(get(), snap.meta.model),
         busy: false,
         permissionQueue: [],
-      questionQueue: [],
-      subagentView: null,
+        questionQueue: [],
+        subagentView: null,
+        subagentHistory: [null],
+        subagentHistoryIndex: 0,
       });
     }
     await get().refreshSessions();
@@ -433,3 +495,19 @@ export const useApp = create<AppState>((set, get) => ({
 
 export { presetToMode };
 export type { TermTab };
+
+async function updateLastWorkspace(
+  get: () => AppState,
+  set: (partial: Partial<AppState>) => void,
+  root: string | null,
+): Promise<void> {
+  const settings = get().settings;
+  if (!root || !settings || settings.workspaceRoot === root) return;
+  const next = {
+    ...settings,
+    workspaceRoot: root,
+    openWorkspaceRoots: workspaceRoots(root, settings.openWorkspaceRoots),
+  };
+  set({ settings: next });
+  await window.cozy.saveSettings(next);
+}
