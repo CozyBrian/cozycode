@@ -1,7 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { pickSpinnerVerb } from "@cozycode/commands";
 import { useApp } from "../store/app-store";
 import { ContextToolGroup, ToolCard } from "../components/ToolCard";
 import { ReasoningCard } from "../components/ReasoningCard";
+import { TextShimmer } from "../components/TextShimmer";
 import { isContextTool, type ToolItem } from "../components/tool-presentation.ts";
 import type { TranscriptItem } from "../transcript.ts";
 import { Markdown } from "./Markdown";
@@ -20,7 +22,6 @@ function Row({ item }: { item: TranscriptItem }) {
       return (
         <div>
           <Markdown text={item.text} />
-          {item.streaming && <span className="ml-0.5 animate-pulse text-primary">▍</span>}
         </div>
       );
     case "tool":
@@ -45,6 +46,14 @@ export function Transcript() {
   const busy = useApp((s) => s.busy);
   const scrollRef = useRef<HTMLDivElement>(null);
   const followingRef = useRef(true);
+  const [verb, setVerb] = useState(() => pickSpinnerVerb());
+
+  useEffect(() => {
+    if (!busy) return;
+    setVerb(pickSpinnerVerb());
+    const interval = setInterval(() => setVerb(pickSpinnerVerb()), 4500);
+    return () => clearInterval(interval);
+  }, [busy]);
 
   useEffect(() => {
     if (followingRef.current) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -77,9 +86,9 @@ export function Transcript() {
             ? <ContextToolGroup key={row[0]?.id} items={row} />
             : <Row key={row.id} item={row} />
         ))}
-        {busy && !items.some((i) => i.kind === "assistant" && i.streaming) && (
-          <div className="text-sm text-muted-foreground">working…</div>
-        )}
+            {busy && !items.some((i) => i.kind === "assistant" && i.streaming) && (
+              <TextShimmer className="text-sm">{`${verb}…`}</TextShimmer>
+            )}
       </div>
     </div>
   );

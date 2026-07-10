@@ -56,8 +56,11 @@ export function foldEvent(items: TranscriptItem[], event: SessionEvent): Transcr
           : it,
       );
     case "reasoning-end":
+      // Only close the still-streaming block. Some adapters (e.g. openai-compatible
+      // / DeepSeek) reuse one reasoning id ("reasoning-0") for every block, so
+      // matching on id alone would overwrite every prior block's duration.
       return items.map((it) =>
-        it.kind === "reasoning" && it.reasoningId === event.id
+        it.kind === "reasoning" && it.reasoningId === event.id && it.streaming
           ? { ...it, streaming: false, durationMs: event.durationMs }
           : it,
       );

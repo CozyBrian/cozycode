@@ -56,7 +56,7 @@ function ChatHeader({ title, active }: { title: string; active: boolean }) {
         active && "border-b border-border/60",
       )}
     >
-      <div className={cn("flex min-w-0 flex-1 items-center", !sidebarOpen && "pl-18")}>
+      <div className={cn("flex min-w-0 flex-1 items-center duration-200", !sidebarOpen && "pl-42")}>
         <div className="min-w-0 flex-1 truncate px-2 text-sm font-medium text-foreground/85">
           {title}
         </div>

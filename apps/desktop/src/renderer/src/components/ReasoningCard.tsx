@@ -2,6 +2,7 @@ import { Brain, ChevronRight } from "lucide-react";
 import { useState } from "react";
 import type { TranscriptItem } from "../transcript.ts";
 import { Markdown } from "../chat/Markdown.tsx";
+import { TextShimmer } from "./TextShimmer";
 import { cn } from "@/lib/utils";
 
 /**
@@ -24,12 +25,11 @@ export function ReasoningCard({ item }: { item: Extract<TranscriptItem, { kind: 
         aria-expanded={open}
         className={cn(
           "flex items-center gap-1.5 text-sm",
-          item.streaming && "animate-pulse",
           hasBody && "cursor-pointer hover:text-foreground/80",
         )}
       >
         <Brain className="size-3.5 shrink-0 opacity-70" />
-        <span>{header}</span>
+        {item.streaming ? <TextShimmer className="text-sm">{header}</TextShimmer> : <span>{header}</span>}
         {hasBody && (
           <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} />
         )}

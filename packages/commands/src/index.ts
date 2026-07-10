@@ -8,6 +8,7 @@ export { COMMAND_DEFS } from "./registry.ts";
 export { parseCommandInput, tokenizeArgs, type ParsedCommand } from "./parse.ts";
 export { resolveModelRef, type ResolveModelRefResult } from "./model-ref.ts";
 export { modelKey, effortsForModel, resolveEffort, cycleEffort } from "./effort.ts";
+export { SPINNER_VERBS, pickSpinnerVerb } from "./spinner-verbs.ts";
 
 // Index of names + aliases → definition, built once at module load.
 // future: register additional command providers here (user config, markdown
