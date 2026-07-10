@@ -2,10 +2,11 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ModelInfo } from "@cozycode/protocol";
+import { reasoningEfforts } from "./reasoning.ts";
 
 const SOURCE = "https://models.dev/api.json";
 const MAX_AGE = 5 * 60 * 1000;
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 4;
 
 export interface CatalogProvider {
   id: string;
@@ -23,6 +24,7 @@ export interface ProviderCatalog {
 interface ModelsDevModel {
   id?: string;
   name?: string;
+  reasoning?: boolean;
   limit?: { context?: number; output?: number };
   cost?: { input?: number; output?: number };
 }
@@ -35,34 +37,42 @@ interface ModelsDevProvider {
   models?: Record<string, ModelsDevModel>;
 }
 
+/** Attach `reasoningEfforts` to offline fallback models from their `reasoning` flag. */
+function withEfforts(npm: string, models: ModelInfo[]): ModelInfo[] {
+  return models.map((model) => ({
+    ...model,
+    reasoningEfforts: reasoningEfforts(model.id, { reasoning: model.reasoning, npm }),
+  }));
+}
+
 const FALLBACK: CatalogProvider[] = [
   {
     id: "openai",
     name: "OpenAI",
     api: "https://api.openai.com/v1",
     npm: "@ai-sdk/openai",
-    models: [
-      { id: "gpt-5.4", name: "GPT-5.4", contextWindow: 1_050_000 },
-      { id: "gpt-5.4-mini", name: "GPT-5.4 Mini", contextWindow: 400_000 },
-      { id: "gpt-5.3-codex-spark", name: "GPT-5.3 Codex Spark", contextWindow: 400_000 },
-      { id: "gpt-5.2", name: "GPT-5.2", contextWindow: 400_000 },
-      { id: "gpt-5.1", name: "GPT-5.1", contextWindow: 400_000 },
-      { id: "gpt-5", name: "GPT-5", contextWindow: 400_000 },
+    models: withEfforts("@ai-sdk/openai", [
+      { id: "gpt-5.4", name: "GPT-5.4", contextWindow: 1_050_000, reasoning: true },
+      { id: "gpt-5.4-mini", name: "GPT-5.4 Mini", contextWindow: 400_000, reasoning: true },
+      { id: "gpt-5.3-codex-spark", name: "GPT-5.3 Codex Spark", contextWindow: 400_000, reasoning: true },
+      { id: "gpt-5.2", name: "GPT-5.2", contextWindow: 400_000, reasoning: true },
+      { id: "gpt-5.1", name: "GPT-5.1", contextWindow: 400_000, reasoning: true },
+      { id: "gpt-5", name: "GPT-5", contextWindow: 400_000, reasoning: true },
       { id: "gpt-4.1", name: "GPT-4.1", contextWindow: 1_047_576 },
       { id: "gpt-4o", name: "GPT-4o", contextWindow: 128_000 },
-      { id: "o3", name: "o3", contextWindow: 200_000 },
-      { id: "o4-mini", name: "o4-mini", contextWindow: 200_000 },
-    ],
+      { id: "o3", name: "o3", contextWindow: 200_000, reasoning: true },
+      { id: "o4-mini", name: "o4-mini", contextWindow: 200_000, reasoning: true },
+    ]),
   },
   {
     id: "deepseek",
     name: "DeepSeek",
     api: "https://api.deepseek.com",
     npm: "@ai-sdk/openai-compatible",
-    models: [
+    models: withEfforts("@ai-sdk/openai-compatible", [
       { id: "deepseek-chat", name: "DeepSeek Chat", contextWindow: 128_000 },
-      { id: "deepseek-reasoner", name: "DeepSeek Reasoner", contextWindow: 128_000 },
-    ],
+      { id: "deepseek-reasoner", name: "DeepSeek Reasoner", contextWindow: 128_000, reasoning: true },
+    ]),
   },
 ];
 
@@ -123,15 +133,20 @@ function normalize(input: Record<string, ModelsDevProvider>): CatalogProvider[] 
     name: provider.name || providerID,
     api: provider.api,
     npm: provider.npm,
-    models: Object.entries(provider.models ?? {}).map(([modelID, model]) => ({
-      id: model.id || modelID,
-      name: model.name || modelID,
-      contextWindow: model.limit?.context,
-      maxOutput: model.limit?.output,
-      cost: model.cost?.input !== undefined && model.cost.output !== undefined
-        ? { input: model.cost.input, output: model.cost.output }
-        : undefined,
-    })),
+    models: Object.entries(provider.models ?? {}).map(([modelID, model]) => {
+      const id = model.id || modelID;
+      return {
+        id,
+        name: model.name || modelID,
+        contextWindow: model.limit?.context,
+        maxOutput: model.limit?.output,
+        cost: model.cost?.input !== undefined && model.cost.output !== undefined
+          ? { input: model.cost.input, output: model.cost.output }
+          : undefined,
+        reasoning: model.reasoning,
+        reasoningEfforts: reasoningEfforts(id, { reasoning: model.reasoning, npm: provider.npm }),
+      };
+    }),
   }));
 }
 

@@ -16,7 +16,15 @@ export type TranscriptItem =
       metadata?: Record<string, unknown>;
     }
   | { id: string; kind: "error"; text: string }
-  | { id: string; kind: "system"; text: string };
+  | { id: string; kind: "system"; text: string }
+  | {
+      id: string;
+      kind: "reasoning";
+      reasoningId: string;
+      text: string;
+      streaming: boolean;
+      durationMs?: number;
+    };
 
 let counter = 0;
 const nextId = () => `i${counter++}`;
@@ -36,6 +44,23 @@ export function foldEvent(items: TranscriptItem[], event: SessionEvent): Transcr
       }
       return [...items, { id: nextId(), kind: "assistant", text: event.text, streaming: true }];
     }
+    case "reasoning-start":
+      return [
+        ...items,
+        { id: nextId(), kind: "reasoning", reasoningId: event.id, text: "", streaming: true },
+      ];
+    case "reasoning-delta":
+      return items.map((it) =>
+        it.kind === "reasoning" && it.reasoningId === event.id && it.streaming
+          ? { ...it, text: it.text + event.text }
+          : it,
+      );
+    case "reasoning-end":
+      return items.map((it) =>
+        it.kind === "reasoning" && it.reasoningId === event.id
+          ? { ...it, streaming: false, durationMs: event.durationMs }
+          : it,
+      );
     case "tool-call-start":
       return [
         ...items,
@@ -62,9 +87,11 @@ export function foldEvent(items: TranscriptItem[], event: SessionEvent): Transcr
     case "error":
       return [...items, { id: nextId(), kind: "error", text: event.message }];
     case "finish":
-      return items.map((it) => (it.kind === "assistant" ? { ...it, streaming: false } : it));
+      return items.map((it) =>
+        it.kind === "assistant" || it.kind === "reasoning" ? { ...it, streaming: false } : it,
+      );
     default:
-      return items; // session-start, permission-asked/replied, step-finish, mode-change are not rendered directly
+      return items; // session-start, permission-asked/replied, step-finish, mode-change, effort-change are not rendered directly
   }
 }
 

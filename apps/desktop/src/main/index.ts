@@ -26,7 +26,7 @@ function createWindow(): void {
     ...(isMac
       ? {
           titleBarStyle: "hiddenInset" as const,
-          trafficLightPosition: { x: 18, y: 18 },
+          trafficLightPosition: { x: 18, y: 17 },
           vibrancy: "under-window" as const,
           visualEffectState: "active" as const,
           backgroundColor: "#00000000",
@@ -72,6 +72,9 @@ function registerIpc(): void {
   ipcMain.handle(IPC.sessionAbort, () => manager?.abort());
   ipcMain.handle(IPC.sessionSetMode, (_e, mode: AgentMode) => manager?.setMode(mode));
   ipcMain.handle(IPC.sessionSetModel, (_e, model: ModelRef) => manager?.setModel(model));
+  ipcMain.handle(IPC.sessionSetEffort, (_e, effort: string | null) =>
+    manager?.setReasoningEffort(effort ?? undefined),
+  );
   ipcMain.handle(IPC.sessionSetPreset, (_e, preset: PermissionPreset) =>
     manager?.setPreset(preset),
   );

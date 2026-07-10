@@ -2,8 +2,12 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { createSession, registry, type Session, type SessionOptions } from "@cozycode/core";
 import {
+  cycleEffort,
+  effortsForModel,
   findCommand,
+  modelKey,
   parseCommandInput,
+  resolveEffort,
   resolveModelRef,
   runCommandInput,
   type CommandContext,
@@ -25,6 +29,7 @@ import {
 } from "./transcript.ts";
 import { ApprovalPrompt } from "./components/ApprovalPrompt.tsx";
 import { CommandPalette } from "./components/CommandPalette.tsx";
+import { EffortDialog } from "./components/EffortDialog.tsx";
 import { Help } from "./components/Help.tsx";
 import { Logo } from "./components/Logo.tsx";
 import { ModelDialog } from "./components/ModelDialog.tsx";
@@ -36,6 +41,7 @@ import { StatusFooter } from "./components/StatusFooter.tsx";
 import { Viewport } from "./components/Viewport.tsx";
 import { theme } from "./theme.ts";
 import { loadProviders } from "./providers.ts";
+import { loadTuiState, saveTuiState } from "./state.ts";
 
 /** Terminals at least this wide auto-show the sidebar inline. */
 const WIDE_COLS = 120;
@@ -46,14 +52,16 @@ export interface AppProps {
   workspaceRoot: string;
   /** Test hook: inject a pre-built model, bypassing the network provider. */
   sessionOptions?: SessionOptions;
+  /** Test hook: effort ladder to attach to the synthetic test provider's model. */
+  testEfforts?: string[];
   onExit?: () => void;
 }
 
-type Overlay = "commands" | "help" | "model" | "provider" | "sessions" | null;
+type Overlay = "commands" | "help" | "model" | "provider" | "sessions" | "effort" | null;
 
 const EMPTY_PROVIDERS: ProviderList = { all: [], connected: [] };
 
-export function App({ initialSession, initialModel, workspaceRoot, sessionOptions, onExit }: AppProps) {
+export function App({ initialSession, initialModel, workspaceRoot, sessionOptions, testEfforts, onExit }: AppProps) {
   const dimensions = useTerminalDimensions();
   const [history, setHistory] = useState<RenderItem[]>([]);
   const [busy, setBusy] = useState(false);
@@ -66,6 +74,7 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
   const [recents, setRecents] = useState<ModelRef[]>(initialModel ? [initialModel] : []);
   const [sidebarOverride, setSidebarOverride] = useState<boolean | null>(null);
   const [mode, setMode] = useState<AgentMode>(initialSession?.mode ?? "build");
+  const [effort, setEffort] = useState<string | undefined>(initialSession?.reasoningEffort);
   const [sessions, setSessions] = useState<TuiSessionEntry[]>([]);
   const [activeSessionID, setActiveSessionID] = useState<string | null>(null);
 
@@ -83,6 +92,10 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
   const registryProvidersRef = useRef(new Set<string>());
   // Tracks the live mode so a fresh session (after /new) keeps the selection.
   const modeRef = useRef<AgentMode>(initialSession?.mode ?? "build");
+  // Tracks the live reasoning effort so a fresh/rebuilt session keeps it.
+  const effortRef = useRef<string | undefined>(initialSession?.reasoningEffort);
+  // Per-model effort selections persisted across runs (keyed provider/model).
+  const tuiStateRef = useRef(loadTuiState());
 
   useEffect(() => {
     historyRef.current = history;
@@ -112,6 +125,9 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
         if (event.type === "mode-change") {
           modeRef.current = event.mode;
           setMode(event.mode);
+        } else if (event.type === "effort-change") {
+          effortRef.current = event.effort;
+          setEffort(event.effort);
         } else if (event.type === "permission-asked") {
           setPermissionQueue((q) => [...q, event.request]);
         } else if (event.type === "permission-replied") {
@@ -145,6 +161,7 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
       workspaceRoot,
       permissions: initialSession?.permissions,
       mode: modeRef.current,
+      reasoningEffort: effortRef.current,
     };
   };
 
@@ -184,12 +201,43 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
       history: historyRef.current,
       model: selected,
       mode: modeRef.current,
+      effort: effortRef.current,
       usage: usageRef.current,
       coreHistory: session.snapshotHistory(),
     });
     activeSessionIDRef.current = id;
     setActiveSessionID(id);
     publishSessions();
+  };
+
+  // The effort ladder for the current model ([] hides the control entirely).
+  const efforts = effortsForModel(providers, model);
+
+  /**
+   * Restore the persisted (stale-dropped) effort for `ref`, updating the ref +
+   * state so a subsequent `startSession` seeds it via `sessionConfig`. Uses the
+   * passed provider list because `providers` state can lag inside async flows.
+   */
+  const restoreEffortFor = (ref: ModelRef | null, list: ProviderList): string | undefined => {
+    const stored = ref ? tuiStateRef.current.reasoningEffort[modelKey(ref)] : undefined;
+    const valid = resolveEffort(stored, effortsForModel(list, ref));
+    effortRef.current = valid;
+    setEffort(valid);
+    return valid;
+  };
+
+  /** Apply an effort selection: validate, push to the live session, persist. */
+  const applyEffort = (next: string | undefined) => {
+    const valid = resolveEffort(next, efforts);
+    effortRef.current = valid;
+    setEffort(valid);
+    sessionRef.current?.setReasoningEffort(valid);
+    if (model) {
+      const key = modelKey(model);
+      if (valid) tuiStateRef.current.reasoningEffort[key] = valid;
+      else delete tuiStateRef.current.reasoningEffort[key];
+      saveTuiState(tuiStateRef.current);
+    }
   };
 
   useEffect(() => {
@@ -201,9 +249,11 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
         source: "custom" as const,
         authMethods: [{ type: "api" as const, label: "Configured API" }],
         models: [...new Set([initialModel.modelID, ...(initialSession.models ?? [])])]
-          .map((id) => ({ id, name: id })),
+          .map((id) => ({ id, name: id, reasoningEfforts: testEfforts })),
       };
-      setProviders({ all: [provider], connected: [provider.id], defaultModel: initialModel });
+      const list: ProviderList = { all: [provider], connected: [provider.id], defaultModel: initialModel };
+      setProviders(list);
+      restoreEffortFor(initialModel, list);
       void startSession(initialModel, false);
       return () => {
         cancelled = true;
@@ -229,6 +279,7 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
       modelRef.current = selected;
       setModel(selected);
       if (!selected) return setOverlay("provider");
+      restoreEffortFor(selected, visible);
       try {
         await startSession(selected, false);
       } catch (error) {
@@ -288,6 +339,11 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
       setSidebarOverride((current) => !(current ?? wide));
       return;
     }
+    // ctrl+t cycles reasoning effort: default → weakest → … → strongest → default.
+    if (key.ctrl && key.name === "t") {
+      if (efforts.length > 0) applyEffort(cycleEffort(effortRef.current, efforts));
+      return;
+    }
     // ProviderDialog owns Escape so nested method/prompt steps can go back.
     if (key.name === "escape" && overlay && overlay !== "provider") {
       setOverlay(null);
@@ -321,6 +377,7 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
         history: [],
         model: selected,
         mode: modeRef.current,
+        effort: effortRef.current,
         coreHistory: [],
       });
       publishSessions();
@@ -336,8 +393,11 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
     saveActiveSession();
     modelRef.current = entry.model;
     modeRef.current = entry.mode;
+    const restoredEffort = resolveEffort(entry.effort, effortsForModel(providers, entry.model));
+    effortRef.current = restoredEffort;
     setModel(entry.model);
     setMode(entry.mode);
+    setEffort(restoredEffort);
     setHistory(entry.history);
     historyRef.current = entry.history;
     setUsage(entry.usage);
@@ -357,8 +417,12 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
   const selectModel = (next: ModelRef) => {
     const previous = modelRef.current;
     modelRef.current = next;
+    // Restore (stale-dropping) the new model's persisted effort before the
+    // session rebuilds so it either seeds the config or is pushed live below.
+    const restored = restoreEffortFor(next, providers);
     if (previous?.providerID === next.providerID && sessionRef.current) {
       sessionRef.current.setModel(next.modelID);
+      sessionRef.current.setReasoningEffort(restored);
       setRecents((items) => [next, ...items.filter((item) => item.providerID !== next.providerID || item.modelID !== next.modelID)].slice(0, 8));
     } else {
       void startSession(next, Boolean(sessionRef.current)).then(() => {
@@ -414,6 +478,26 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
     },
     openModelPicker: () => setOverlay("model"),
     openProviderPicker: () => setOverlay("provider"),
+    setEffort: (level) => {
+      if (efforts.length === 0) {
+        commandCtx.notify("error", "This model has no reasoning-effort control.");
+        return;
+      }
+      const normalized = level.toLowerCase();
+      if (normalized === "default" || normalized === "") return applyEffort(undefined);
+      if (!efforts.includes(normalized)) {
+        commandCtx.notify("error", `Unknown effort "${level}". Available: ${efforts.join(", ")}.`);
+        return;
+      }
+      applyEffort(normalized);
+    },
+    openEffortPicker: () => {
+      if (efforts.length === 0) {
+        commandCtx.notify("error", "This model has no reasoning-effort control.");
+        return;
+      }
+      setOverlay("effort");
+    },
     showHelp: () => setOverlay("help"),
     exit,
     send: (text) => {
@@ -475,6 +559,7 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
         const nextModel = { providerID, modelID: first.id };
         modelRef.current = nextModel;
         setModel(nextModel);
+        restoreEffortFor(nextModel, next);
         setRecents((items) => [
           nextModel,
           ...items.filter((item) => item.providerID !== providerID || item.modelID !== first.id),
@@ -541,17 +626,28 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
               onCancel={() => setOverlay(null)}
             />
           ) : null}
+          {overlay === "effort" ? (
+            <EffortDialog
+              efforts={efforts}
+              current={effort}
+              onSelect={(level) => {
+                applyEffort(level);
+                setOverlay(null);
+              }}
+              onCancel={() => setOverlay(null)}
+            />
+          ) : null}
           <box flexShrink={0} flexDirection="column" marginTop={1}>
             {approval ? <ApprovalPrompt request={approval} queueLength={permissionQueue.length} onRespond={respond} /> : overlay ? null : <Prompt busy={busy} inputKey={inputKey} modelLabel={modelLabel} mode={mode} workspaceRoot={workspaceRoot} usage={usage} onSubmit={submit} onToggleMode={toggleMode} />}
-            <StatusFooter modelLabel={modelLabel} mode={mode} workspaceRoot={workspaceRoot} busy={busy} approvals={permissionQueue.length} />
+            <StatusFooter modelLabel={modelLabel} mode={mode} effort={effort} workspaceRoot={workspaceRoot} busy={busy} approvals={permissionQueue.length} />
           </box>
         </box>
         {sidebarVisible ? sidebarOverlay ? (
           <box position="absolute" top={0} right={0} bottom={0} left={0} alignItems="flex-end" backgroundColor="#00000055" zIndex={40}>
-            <Sidebar modelLabel={modelLabel} mode={mode} workspaceRoot={workspaceRoot} usage={usage} items={items} overlay />
+            <Sidebar modelLabel={modelLabel} mode={mode} effort={effort} workspaceRoot={workspaceRoot} usage={usage} items={items} overlay />
           </box>
         ) : (
-          <Sidebar modelLabel={modelLabel} mode={mode} workspaceRoot={workspaceRoot} usage={usage} items={items} />
+          <Sidebar modelLabel={modelLabel} mode={mode} effort={effort} workspaceRoot={workspaceRoot} usage={usage} items={items} />
         ) : null}
       </box>
     </box>

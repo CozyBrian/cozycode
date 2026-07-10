@@ -1,7 +1,8 @@
-import { Check, ChevronDown, Plus } from "lucide-react";
+import { ChevronDown, Plus } from "lucide-react";
 import type { ModelRef, ProviderInfo } from "@cozycode/protocol";
 import { useApp } from "../store/app-store";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 import {
   Command,
   CommandEmpty,
@@ -27,18 +28,20 @@ function same(a: ModelRef | null, b: ModelRef): boolean {
 function ModelItem({ provider, ref }: { provider: ProviderInfo; ref: ModelRef }) {
   const current = useApp((state) => state.model);
   const setModel = useApp((state) => state.setModel);
+  const showContextSize = useApp((state) => state.settings?.showContextSize);
   const model = provider.models.find((item) => item.id === ref.modelID);
   if (!model) return null;
+  const active = same(current, ref);
   return (
     <CommandItem
       value={`${provider.name} ${model.name} ${model.id}`}
       onSelect={() => setModel(ref)}
+      className={cn(active && "bg-accent")}
     >
       <span className="min-w-0 flex-1 truncate">{model.name}</span>
-      {contextWindow(model.contextWindow) && (
+      {showContextSize && contextWindow(model.contextWindow) && (
         <span className="text-xs text-muted-foreground">{contextWindow(model.contextWindow)}</span>
       )}
-      {same(current, ref) && <Check className="size-4 text-primary" />}
     </CommandItem>
   );
 }
@@ -56,6 +59,7 @@ export function ModelPicker() {
     const item = providers?.all.find((candidate) => candidate.id === ref.providerID);
     return item?.models.some((candidate) => candidate.id === ref.modelID) ? [{ ref, provider: item }] : [];
   }).slice(0, 5);
+  const recentKeys = new Set(resolvedRecent.map(({ ref }) => `${ref.providerID}/${ref.modelID}`));
 
   return (
     <Popover
@@ -72,7 +76,7 @@ export function ModelPicker() {
         >
           <span className="max-w-40 truncate">
             {modelInfo?.name ?? model?.modelID ?? "Model"}
-            {provider && <span className="text-muted-foreground/70"> · {provider.name}</span>}
+            {provider && <span className="text-muted-foreground/70"></span>}
           </span>
           <ChevronDown className="size-3.5" />
         </button>
@@ -87,7 +91,7 @@ export function ModelPicker() {
                 {resolvedRecent.map(({ ref, provider: recentProvider }) => (
                   <div key={`${ref.providerID}/${ref.modelID}`} className="relative">
                     <ModelItem provider={recentProvider} ref={ref} />
-                    <Badge variant="outline" className="pointer-events-none absolute right-8 top-2">
+                    <Badge variant="outline" className="pointer-events-none absolute right-2 top-2">
                       {recentProvider.name}
                     </Badge>
                   </div>
@@ -96,7 +100,7 @@ export function ModelPicker() {
             )}
             {connected.map((item) => (
               <CommandGroup key={item.id} heading={item.name}>
-                {item.models.map((candidate) => (
+                {item.models.filter((candidate) => !recentKeys.has(`${item.id}/${candidate.id}`)).map((candidate) => (
                   <ModelItem
                     key={candidate.id}
                     provider={item}

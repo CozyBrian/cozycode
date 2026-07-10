@@ -33,6 +33,8 @@ export class SettingsStore {
       workspaceRoot: stored.workspaceRoot,
       permissions: stored.permissions,
       recentModels: stored.recentModels,
+      reasoningEfforts: stored.reasoningEfforts,
+      showContextSize: stored.showContextSize,
     });
   }
 
@@ -41,6 +43,8 @@ export class SettingsStore {
       workspaceRoot: input.workspaceRoot,
       permissions: input.permissions,
       recentModels: input.recentModels?.slice(0, 8),
+      reasoningEfforts: input.reasoningEfforts,
+      showContextSize: input.showContextSize,
     };
     await mkdir(app.getPath("userData"), { recursive: true });
     await writeFile(this.file, JSON.stringify(next, null, 2), "utf8");

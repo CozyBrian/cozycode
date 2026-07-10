@@ -10,6 +10,7 @@ import type {
   TokenUsage,
 } from "@cozycode/protocol";
 import { createModel } from "./model.ts";
+import { reasoningProviderOptions } from "./reasoning.ts";
 import { PermissionService } from "./permission/service.ts";
 import { DEFAULT_RULESET, PLAN_RULESET, mergeRulesets } from "./permission/config.ts";
 import { buildTools } from "./tools/index.ts";
@@ -49,10 +50,13 @@ export class Session {
   private agent: ToolLoopAgent;
   private currentModel: string;
   private currentMode: AgentMode;
+  private currentEffort: string | undefined;
   private abortController: AbortController | null = null;
   private stepCounter = 0;
   private hadPlanTurn = false;
   private buildSwitchPending = false;
+  /** Start time (ms) per in-flight reasoning block id, for duration reporting. */
+  private readonly reasoningStarts = new Map<string, number>();
   // The model used to build the current agent, retained so a mode change can
   // rebuild with the same model rather than reconstructing the provider model.
   private activeModel: LanguageModel;
@@ -78,6 +82,7 @@ export class Session {
       reportToolMetadata: (toolCallId, metadata) => this.toolMetadata.set(toolCallId, metadata),
     });
     this.currentModel = config.model;
+    this.currentEffort = config.reasoningEffort;
     // A pre-built model can be injected (tests, custom wrapping); otherwise we
     // build one from the provider config.
     this.activeModel = options.model ?? createModel(config.provider, config.model);
@@ -92,6 +97,11 @@ export class Session {
   /** The agent mode currently in effect. */
   get mode(): AgentMode {
     return this.currentMode;
+  }
+
+  /** The reasoning effort currently in effect (undefined = provider default). */
+  get reasoningEffort(): string | undefined {
+    return this.currentEffort;
   }
 
   /**
@@ -153,12 +163,26 @@ export class Session {
     this.events.push({ type: "mode-change", mode });
   }
 
+  /**
+   * Change the reasoning effort mid-session. Rebuilds the agent (the AI SDK
+   * only accepts `providerOptions` at construction) while keeping the same
+   * model and history, then emits `effort-change` for frontends.
+   */
+  setReasoningEffort(effort: string | undefined): void {
+    if (effort === this.currentEffort) return;
+    this.currentEffort = effort;
+    this.agent = this.buildAgent(this.activeModel);
+    this.events.push({ type: "effort-change", effort });
+  }
+
   private buildAgent(model: LanguageModel): ToolLoopAgent {
+    const providerOptions = reasoningProviderOptions(this.config.provider, this.currentEffort);
     return new ToolLoopAgent({
       model,
       instructions: this.config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
       tools: this.tools,
       stopWhen: isStepCount(this.config.maxSteps ?? DEFAULT_MAX_STEPS),
+      ...(providerOptions ? { providerOptions } : {}),
     });
   }
 
@@ -259,6 +283,28 @@ export class Session {
         this.toolMetadata.delete(toolCallId);
       }
         break;
+      case "reasoning-start":
+        this.reasoningStarts.set(part.id as string, Date.now());
+        this.events.push({ type: "reasoning-start", id: part.id as string });
+        break;
+      case "reasoning-delta":
+        this.events.push({
+          type: "reasoning-delta",
+          id: part.id as string,
+          text: part.text as string,
+        });
+        break;
+      case "reasoning-end": {
+        const id = part.id as string;
+        const started = this.reasoningStarts.get(id);
+        this.reasoningStarts.delete(id);
+        this.events.push({
+          type: "reasoning-end",
+          id,
+          durationMs: started !== undefined ? Date.now() - started : undefined,
+        });
+        break;
+      }
       case "finish-step":
         this.events.push({ type: "step-finish", stepNumber: ++this.stepCounter });
         break;

@@ -9,6 +9,7 @@ import type { PermissionConfig, SessionConfig } from "@cozycode/protocol";
 import { rulesetFromConfig } from "@cozycode/core";
 import { App } from "../src/app.tsx";
 import { Markdown } from "../src/components/Markdown.tsx";
+import { Reasoning } from "../src/components/Reasoning.tsx";
 import { ToolRow } from "../src/components/ToolRow.tsx";
 
 const usage = { inputTokens: 5, outputTokens: 5, totalTokens: 10 } as const;
@@ -41,11 +42,29 @@ function twoStepWriteModel(content: string) {
   });
 }
 
+/** A model that emits a reasoning block, then a final text message. */
+function reasoningModel() {
+  return new MockLanguageModelV4({
+    doStream: step([
+      { type: "stream-start", warnings: [] },
+      { type: "reasoning-start", id: "r1" },
+      { type: "reasoning-delta", id: "r1", delta: "Planning the approach." },
+      { type: "reasoning-end", id: "r1" },
+      { type: "text-start", id: "t1" },
+      { type: "text-delta", id: "t1", delta: "Here is the answer." },
+      { type: "text-end", id: "t1" },
+      { type: "finish", finishReason: "stop", usage },
+    ]),
+  });
+}
+
 let root: string;
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "cozycode-tui-"));
+  process.env.COZY_STATE_FILE = join(root, "tui-state.json");
 });
 afterEach(async () => {
+  delete process.env.COZY_STATE_FILE;
   await rm(root, { recursive: true, force: true });
 });
 
@@ -76,6 +95,22 @@ async function renderApp(permissions: PermissionConfig, content: string) {
       initialModel={{ providerID: cfg.provider.name, modelID: cfg.model }}
       workspaceRoot={root}
       sessionOptions={{ model: twoStepWriteModel(content) }}
+      onExit={() => {}}
+    />,
+    { width: 100, height: 30 },
+  );
+}
+
+/** Render the App with a custom model and optional effort ladder (test hook). */
+async function renderAppWith(model: MockLanguageModelV4, testEfforts?: string[]) {
+  const cfg = config("allow");
+  return testRender(
+    <App
+      initialSession={cfg}
+      initialModel={{ providerID: cfg.provider.name, modelID: cfg.model }}
+      workspaceRoot={root}
+      sessionOptions={{ model }}
+      testEfforts={testEfforts}
       onExit={() => {}}
     />,
     { width: 100, height: 30 },
@@ -352,4 +387,65 @@ describe("TUI App (integration, mock model)", () => {
     await app.waitForFrame((frame) => frame.includes("Unknown command: /bogus"));
     expect(await fileExists("out.txt")).toBe(false);
     app.renderer.destroy();
-  });});
+  });
+
+  test("Reasoning row renders collapsed with a duration and hides the body", async () => {
+    const app = await testRender(
+      <box width={100} height={6}>
+        <Reasoning
+          item={{
+            id: "r",
+            kind: "reasoning",
+            reasoningId: "r1",
+            text: "**Plan**\n\nsecret body",
+            streaming: false,
+            durationMs: 4200,
+          }}
+        />
+      </box>,
+      { width: 100, height: 6 },
+    );
+    await app.flush();
+    const frame = app.captureCharFrame();
+    expect(frame).toContain("Thought");
+    expect(frame).toContain("4s");
+    expect(frame).toContain("Plan");
+    expect(frame).not.toContain("secret body");
+    app.renderer.destroy();
+  });
+
+  test("streams a collapsed thinking block then the final answer", async () => {
+    const app = await renderAppWith(reasoningModel());
+    await app.flush();
+    await app.mockInput.typeText("think about it");
+    app.mockInput.pressEnter();
+    await app.waitForFrame((frame) => frame.includes("Here is the answer."));
+    const frame = app.captureCharFrame();
+    expect(frame).toContain("Thought");
+    // Collapsed by default: the reasoning body is not shown.
+    expect(frame).not.toContain("Planning the approach.");
+    app.renderer.destroy();
+  });
+
+  test("ctrl+t cycles reasoning effort shown in the sidebar", async () => {
+    const app = await renderAppWith(twoStepWriteModel("x"), ["low", "medium", "high"]);
+    app.resize(130, 30); // wide enough to show the sidebar (with its effort line)
+    await app.flush();
+    // No effort selected initially.
+    expect(app.captureCharFrame()).not.toContain("effort: low");
+
+    // Cycle: default → low → medium → high → default.
+    app.mockInput.pressKey("t", { ctrl: true });
+    await app.waitForFrame((frame) => frame.includes("effort: low"));
+
+    app.mockInput.pressKey("t", { ctrl: true });
+    await app.waitForFrame((frame) => frame.includes("effort: medium"));
+
+    app.mockInput.pressKey("t", { ctrl: true });
+    await app.waitForFrame((frame) => frame.includes("effort: high"));
+
+    app.mockInput.pressKey("t", { ctrl: true });
+    await app.waitForFrame((frame) => !frame.includes("effort:"));
+    app.renderer.destroy();
+  });
+});

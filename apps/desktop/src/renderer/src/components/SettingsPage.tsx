@@ -21,10 +21,12 @@ export function SettingsPage() {
   const section = useApp((state) => state.settingsSection);
   const configured = Boolean(initial?.workspaceRoot && providers?.connected.length);
   const [workspaceRoot, setWorkspaceRoot] = useState(initial?.workspaceRoot ?? "");
+  const [showContextSize, setShowContextSize] = useState(initial?.showContextSize ?? false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => setWorkspaceRoot(initial?.workspaceRoot ?? ""), [initial]);
+  useEffect(() => setShowContextSize(initial?.showContextSize ?? false), [initial]);
 
   const save = async () => {
     if (!workspaceRoot) return setError("A workspace folder is required.");
@@ -38,6 +40,7 @@ export function SettingsPage() {
         workspaceRoot,
         permissions: initial?.permissions,
         recentModels: useApp.getState().recentModels,
+        showContextSize,
       });
       useApp.getState().setSettings(saved);
       useApp.getState().closeSettings();
@@ -84,6 +87,25 @@ export function SettingsPage() {
                   <Input value={workspaceRoot} onChange={(event) => setWorkspaceRoot(event.target.value)} placeholder="Workspace folder" />
                   <Button variant="outline" onClick={async () => { const dir = await window.cozy.pickWorkspace(); if (dir) setWorkspaceRoot(dir); }}>Choose…</Button>
                 </div>
+              </section>
+            ) : section === "appearance" ? (
+              <section className="rounded-2xl border border-border/70 bg-white/3 p-5">
+                <div className="mb-4 flex items-center gap-2"><Palette className="size-4 text-primary" /><h2 className="text-sm font-semibold">Model Picker</h2></div>
+                <label className="flex cursor-pointer items-center gap-3">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={showContextSize}
+                    onClick={() => setShowContextSize((v) => !v)}
+                    className={cn(
+                      "relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors",
+                      showContextSize ? "bg-primary" : "bg-white/10",
+                    )}
+                  >
+                    <span className={cn("pointer-events-none block size-4 rounded-full bg-white shadow transition-transform", showContextSize ? "translate-x-4" : "translate-x-0")} />
+                  </button>
+                  <span className="text-sm">Show context window sizes</span>
+                </label>
               </section>
             ) : (
               <section className="rounded-2xl border border-border/70 bg-white/3 p-5 text-sm text-muted-foreground">These settings are coming soon.</section>

@@ -14,6 +14,7 @@ const KEYS: [string, string][] = [
   ["Tab", "toggle plan / build"],
   ["⌘B", "toggle sidebar"],
   ["⌘J", "toggle terminal"],
+  ["⌘⇧T", "cycle reasoning effort"],
   ["⌘N", "new chat"],
   ["⌘,", "open settings"],
 ];

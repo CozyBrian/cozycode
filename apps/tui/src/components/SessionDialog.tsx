@@ -9,6 +9,7 @@ export interface TuiSessionEntry {
   history: RenderItem[];
   model: ModelRef;
   mode: AgentMode;
+  effort?: string;
   usage?: TokenUsage;
   coreHistory: ModelMessage[];
 }
@@ -30,7 +31,7 @@ export function SessionDialog({ sessions, activeID, onSelect, onCancel }: Props)
       options={[...sessions].reverse().map((session) => ({
         value: session.id,
         title: session.title,
-        description: `${session.model.modelID} · ${session.mode.toUpperCase()}`,
+        description: `${session.model.modelID} · ${session.mode.toUpperCase()}${session.effort ? ` · ${session.effort}` : ""}`,
         current: session.id === activeID,
       }))}
       onSelect={onSelect}

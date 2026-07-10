@@ -9,6 +9,7 @@ const KEYS = [
   ["esc", "interrupt or close overlay"],
   ["ctrl+p", "command palette"],
   ["ctrl+o", "switch model"],
+  ["ctrl+t", "cycle reasoning effort"],
   ["tab", "toggle plan / build"],
   ["ctrl+b", "toggle sidebar"],
   ["pgup/pgdn", "scroll transcript"],

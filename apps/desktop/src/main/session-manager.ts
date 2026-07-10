@@ -59,6 +59,7 @@ export class SessionManager {
       workspaceRoot: meta.workspaceRoot ?? homedir(),
       permissions,
       mode,
+      reasoningEffort: settings?.reasoningEfforts?.[`${meta.model.providerID}/${meta.model.modelID}`],
     };
   }
 
@@ -179,6 +180,15 @@ export class SessionManager {
 
   setMode(mode: AgentMode): void {
     this.session?.setMode(mode);
+  }
+
+  /**
+   * Set the live session's reasoning effort. The renderer persists the choice
+   * to settings and drives this after a model switch, so main stays dumb about
+   * which levels a model supports.
+   */
+  setReasoningEffort(effort: string | undefined): void {
+    this.session?.setReasoningEffort(effort);
   }
 
   async setModel(model: ModelRef): Promise<void> {

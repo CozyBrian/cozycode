@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useApp } from "../store/app-store";
 import { ContextToolGroup, ToolCard } from "../components/ToolCard";
+import { ReasoningCard } from "../components/ReasoningCard";
 import { isContextTool, type ToolItem } from "../components/tool-presentation.ts";
 import type { TranscriptItem } from "../transcript.ts";
 import { Markdown } from "./Markdown";
@@ -24,6 +25,8 @@ function Row({ item }: { item: TranscriptItem }) {
       );
     case "tool":
       return <ToolCard item={item} />;
+    case "reasoning":
+      return <ReasoningCard item={item} />;
     case "error":
       return (
         <div className="selectable rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-2.5 text-sm text-destructive">

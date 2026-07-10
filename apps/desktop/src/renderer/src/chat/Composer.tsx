@@ -8,8 +8,10 @@ import {
   type CommandContext,
   type CommandDef,
 } from "@cozycode/commands";
+import { effortsForModel } from "@cozycode/commands";
 import { useApp } from "../store/app-store";
 import { CommandSuggestions } from "./CommandSuggestions";
+import { EffortPicker } from "./EffortPicker";
 import { ModelPicker } from "./ModelPicker";
 import { PermissionPill } from "./PermissionPill";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -59,6 +61,21 @@ export function Composer({ centered = false }: { centered?: boolean }) {
         const result = resolveModelRef(id, s.providers);
         if ("error" in result) s.systemNote(result.error, true);
         else s.setModel(result);
+      },
+      setEffort: (level) => {
+        const efforts = effortsForModel(s.providers ?? { all: [], connected: [] }, s.model);
+        if (efforts.length === 0) return s.systemNote("This model has no reasoning-effort control.", true);
+        const normalized = level.toLowerCase();
+        if (normalized === "default" || normalized === "") return s.setEffort(undefined);
+        if (!efforts.includes(normalized)) {
+          return s.systemNote(`Unknown effort "${level}". Available: ${efforts.join(", ")}.`, true);
+        }
+        s.setEffort(normalized);
+      },
+      openEffortPicker: () => {
+        const efforts = effortsForModel(s.providers ?? { all: [], connected: [] }, s.model);
+        if (efforts.length === 0) return s.systemNote("This model has no reasoning-effort control.", true);
+        s.setEffortPickerOpen(true);
       },
       showHelp: () => s.setHelpOpen(true),
       exit: () => window.close(),
@@ -164,12 +181,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 
           <div className="ml-auto flex items-center gap-1">
             <ModelPicker />
-            <button
-              type="button"
-              className="flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
-            >
-              <Mic className="size-4" />
-            </button>
+            <EffortPicker />
             {busy ? (
               <button
                 type="button"

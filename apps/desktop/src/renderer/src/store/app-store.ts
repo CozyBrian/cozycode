@@ -13,6 +13,7 @@ import type {
   SessionMeta,
   SessionRecord,
 } from "../../../shared/ipc.ts";
+import { effortsForModel, modelKey, resolveEffort } from "@cozycode/commands";
 import { foldEvent, userItem, type TranscriptItem } from "../transcript.ts";
 
 interface TermTab {
@@ -36,6 +37,7 @@ export interface AppState {
   settingsSection: SettingsSection;
   helpOpen: boolean;
   modelPickerOpen: boolean;
+  effortPickerOpen: boolean;
 
   // sessions
   sessions: SessionMeta[];
@@ -46,6 +48,8 @@ export interface AppState {
   busy: boolean;
   preset: PermissionPreset;
   model: ModelRef | null;
+  /** Reasoning effort for the current model (undefined = provider default). */
+  effort: string | undefined;
   providers: ProviderList | null;
   recentModels: ModelRef[];
   /** FIFO of pending permission asks; the modal shows the head, badge shows length. */
@@ -70,6 +74,7 @@ export interface AppState {
   closeSettings(): void;
   setHelpOpen(open: boolean): void;
   setModelPickerOpen(open: boolean): void;
+  setEffortPickerOpen(open: boolean): void;
   setInput(v: string): void;
   setSettings(s: AppSettings): void;
 
@@ -84,6 +89,8 @@ export interface AppState {
   setPreset(preset: PermissionPreset): void;
   setMode(mode: AgentMode): void;
   setModel(model: ModelRef): void;
+  /** Set the reasoning effort for the current model (undefined clears to default). */
+  setEffort(effort: string | undefined): void;
   refreshProviders(): Promise<void>;
   replyPermission(requestId: string, reply: PermissionReply, message?: string): void;
   systemNote(text: string, error?: boolean): void;
@@ -103,6 +110,16 @@ export type SettingsSection =
   | "advanced";
 
 const presetToMode = (p: PermissionPreset): AgentMode => (p === "plan" ? "plan" : "build");
+
+/** The persisted (stale-dropped) reasoning effort for a model given current providers/settings. */
+function storedEffort(
+  state: Pick<AppState, "providers" | "settings">,
+  model: ModelRef | null,
+): string | undefined {
+  if (!model || !state.providers) return undefined;
+  const stored = state.settings?.reasoningEfforts?.[modelKey(model)];
+  return resolveEffort(stored, effortsForModel(state.providers, model));
+}
 
 function replayRecords(records: SessionRecord[]): TranscriptItem[] {
   let items: TranscriptItem[] = [];
@@ -127,6 +144,7 @@ export const useApp = create<AppState>((set, get) => ({
   settingsSection: "general",
   helpOpen: false,
   modelPickerOpen: false,
+  effortPickerOpen: false,
 
   sessions: [],
   activeId: null,
@@ -135,6 +153,7 @@ export const useApp = create<AppState>((set, get) => ({
   busy: false,
   preset: "ask",
   model: null,
+  effort: undefined,
   providers: null,
   recentModels: [],
   permissionQueue: [],
@@ -167,6 +186,7 @@ export const useApp = create<AppState>((set, get) => ({
         items: replayRecords(snap.records),
         preset: snap.meta.preset,
         model: snap.meta.model,
+        effort: storedEffort(get(), snap.meta.model),
         busy: false,
       });
       void get().refreshSessions();
@@ -186,6 +206,7 @@ export const useApp = create<AppState>((set, get) => ({
       // Covers cascade-reject and always-grant of siblings too — no extra logic.
       set((s) => ({ permissionQueue: s.permissionQueue.filter((r) => r.id !== event.requestId) }));
     }
+    if (event.type === "effort-change") set({ effort: event.effort });
     if (event.type === "finish" || event.type === "error") set({ busy: false });
   },
 
@@ -199,6 +220,7 @@ export const useApp = create<AppState>((set, get) => ({
   closeSettings: () => set({ settingsOpen: false }),
   setHelpOpen: (open) => set({ helpOpen: open }),
   setModelPickerOpen: (open) => set({ modelPickerOpen: open }),
+  setEffortPickerOpen: (open) => set({ effortPickerOpen: open }),
   setInput: (v) => set({ input: v }),
   setSettings: (s) => set({ settings: s }),
 
@@ -221,6 +243,7 @@ export const useApp = create<AppState>((set, get) => ({
       items: replayRecords(snap.records),
       preset: snap.meta.preset,
       model: snap.meta.model,
+      effort: storedEffort(get(), snap.meta.model),
       busy: false,
       input: "",
       permissionQueue: [],
@@ -236,6 +259,7 @@ export const useApp = create<AppState>((set, get) => ({
       items: replayRecords(snap.records),
       preset: snap.meta.preset,
       model: snap.meta.model,
+      effort: storedEffort(get(), snap.meta.model),
       busy: false,
       input: "",
       permissionQueue: [],
@@ -250,6 +274,7 @@ export const useApp = create<AppState>((set, get) => ({
         items: replayRecords(snap.records),
         preset: snap.meta.preset,
         model: snap.meta.model,
+        effort: storedEffort(get(), snap.meta.model),
         busy: false,
         permissionQueue: [],
       });
@@ -297,6 +322,27 @@ export const useApp = create<AppState>((set, get) => ({
     const settings = get().settings;
     if (settings) {
       const next = { ...settings, recentModels };
+      set({ settings: next });
+      void window.cozy.saveSettings(next);
+    }
+    // Restore (stale-dropping) the new model's effort and push it to the live
+    // session, since main's same-provider setModel does not re-apply effort.
+    const restored = storedEffort(get(), model);
+    set({ effort: restored });
+    void window.cozy.setEffort(restored);
+  },
+
+  setEffort(effort) {
+    const { model, providers } = get();
+    const valid = resolveEffort(effort, effortsForModel(providers ?? { all: [], connected: [] }, model));
+    set({ effort: valid });
+    void window.cozy.setEffort(valid);
+    const settings = get().settings;
+    if (settings && model) {
+      const efforts = { ...settings.reasoningEfforts };
+      if (valid) efforts[modelKey(model)] = valid;
+      else delete efforts[modelKey(model)];
+      const next = { ...settings, reasoningEfforts: efforts };
       set({ settings: next });
       void window.cozy.saveSettings(next);
     }

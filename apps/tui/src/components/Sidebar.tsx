@@ -5,6 +5,7 @@ import { shortPath, theme } from "../theme.ts";
 interface Props {
   modelLabel: string;
   mode: AgentMode;
+  effort?: string;
   workspaceRoot: string;
   usage?: TokenUsage;
   items: RenderItem[];
@@ -20,7 +21,7 @@ const FILE_TOOLS = new Set(["read_file", "write_file", "edit_file"]);
  * model, workspace, token usage, and per-session tool/file activity — all
  * derived from the transcript, so it needs no extra state.
  */
-export function Sidebar({ modelLabel, mode, workspaceRoot, usage, items, overlay }: Props) {
+export function Sidebar({ modelLabel, mode, effort, workspaceRoot, usage, items, overlay }: Props) {
   const tools = toolCounts(items);
   const files = filesTouched(items);
 
@@ -55,6 +56,7 @@ export function Sidebar({ modelLabel, mode, workspaceRoot, usage, items, overlay
       </Section>
       <Section title="Model">
         <text fg={theme.text}>{modelLabel}</text>
+        {effort ? <text fg={theme.warning}>{`effort: ${effort}`}</text> : null}
       </Section>
       <Section title="Workspace">
         <text fg={theme.text}>{shortPath(workspaceRoot)}</text>

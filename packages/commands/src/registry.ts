@@ -37,6 +37,19 @@ export const COMMAND_DEFS: CommandDef[] = [
     },
   }),
   defineCommand({
+    name: "effort",
+    title: "Reasoning effort",
+    aliases: ["reasoning"],
+    category: "session",
+    description: "Set reasoning effort (reasoning models only)",
+    args: [{ name: "level", description: "default, low, medium, high, …" }],
+    run: (ctx, args) => {
+      const level = args.trim();
+      if (level && ctx.setEffort) ctx.setEffort(level);
+      else ctx.openEffortPicker?.();
+    },
+  }),
+  defineCommand({
     name: "provider",
     title: "Connect provider",
     aliases: ["providers", "connect", "auth"],

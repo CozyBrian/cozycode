@@ -26,6 +26,7 @@ const api: CozyApi = {
   abort: () => ipcRenderer.invoke(IPC.sessionAbort),
   setMode: (mode: AgentMode) => ipcRenderer.invoke(IPC.sessionSetMode, mode),
   setModel: (ref: ModelRef) => ipcRenderer.invoke(IPC.sessionSetModel, ref),
+  setEffort: (effort?: string) => ipcRenderer.invoke(IPC.sessionSetEffort, effort ?? null),
   setPreset: (preset: PermissionPreset) => ipcRenderer.invoke(IPC.sessionSetPreset, preset),
   replyPermission: (body: PermissionReplyBody) => ipcRenderer.invoke(IPC.permissionReply, body),
 

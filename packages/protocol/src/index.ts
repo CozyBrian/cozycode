@@ -29,6 +29,14 @@ export interface ModelInfo {
   contextWindow?: number;
   maxOutput?: number;
   cost?: { input: number; output: number };
+  /** models.dev reasoning capability flag. */
+  reasoning?: boolean;
+  /**
+   * Ordered reasoning-effort levels (weakest → strongest) this model accepts.
+   * Empty or absent means the model exposes no effort control; frontends hide
+   * the effort UI in that case.
+   */
+  reasoningEfforts?: string[];
 }
 
 export interface AuthMethodInfo {
@@ -169,6 +177,14 @@ export type SessionEvent =
   | { type: "step-finish"; stepNumber: number }
   | { type: "error"; message: string }
   | { type: "mode-change"; mode: AgentMode }
+  /** The active reasoning effort changed (undefined = provider default). */
+  | { type: "effort-change"; effort?: string }
+  /** A reasoning/thinking block began streaming. */
+  | { type: "reasoning-start"; id: string }
+  /** Incremental reasoning text for the block with matching `id`. */
+  | { type: "reasoning-delta"; id: string; text: string }
+  /** A reasoning block finished; `durationMs` is wall-clock time if known. */
+  | { type: "reasoning-end"; id: string; durationMs?: number }
   /** A tool call is awaiting the user's permission decision. */
   | { type: "permission-asked"; request: PermissionRequest }
   /** A pending permission ask was resolved (by the user, or by cascade/always). */
@@ -211,6 +227,11 @@ export interface SessionConfig {
   permissions?: Ruleset;
   /** Initial agent mode; defaults to "build" when omitted. */
   mode?: AgentMode;
+  /**
+   * Initial reasoning effort. Only meaningful for models whose
+   * `ModelInfo.reasoningEfforts` is non-empty; undefined = provider default.
+   */
+  reasoningEffort?: string;
   /** Hard cap on agent steps per turn. */
   maxSteps?: number;
 }

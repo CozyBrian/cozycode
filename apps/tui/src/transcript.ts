@@ -16,7 +16,15 @@ export type RenderItem =
       metadata?: Record<string, unknown>;
     }
   | { id: string; kind: "error"; text: string }
-  | { id: string; kind: "system"; text: string };
+  | { id: string; kind: "system"; text: string }
+  | {
+      id: string;
+      kind: "reasoning";
+      reasoningId: string;
+      text: string;
+      streaming: boolean;
+      durationMs?: number;
+    };
 
 let counter = 0;
 export const nextId = () => `i${counter++}`;
@@ -44,6 +52,23 @@ export function foldTurn(items: RenderItem[], event: SessionEvent): RenderItem[]
       }
       return [...items, { id: nextId(), kind: "assistant", text: event.text, streaming: true }];
     }
+    case "reasoning-start":
+      return [
+        ...items,
+        { id: nextId(), kind: "reasoning", reasoningId: event.id, text: "", streaming: true },
+      ];
+    case "reasoning-delta":
+      return items.map((it) =>
+        it.kind === "reasoning" && it.reasoningId === event.id && it.streaming
+          ? { ...it, text: it.text + event.text }
+          : it,
+      );
+    case "reasoning-end":
+      return items.map((it) =>
+        it.kind === "reasoning" && it.reasoningId === event.id
+          ? { ...it, streaming: false, durationMs: event.durationMs }
+          : it,
+      );
     case "tool-call-start":
       return [
         ...items,
@@ -69,9 +94,11 @@ export function foldTurn(items: RenderItem[], event: SessionEvent): RenderItem[]
   }
 }
 
-/** Mark the trailing assistant message as no longer streaming (turn ended). */
+/** Mark trailing assistant / reasoning items as no longer streaming (turn ended). */
 export function finalizeTurn(items: RenderItem[]): RenderItem[] {
-  return items.map((it) => (it.kind === "assistant" ? { ...it, streaming: false } : it));
+  return items.map((it) =>
+    it.kind === "assistant" || it.kind === "reasoning" ? { ...it, streaming: false } : it,
+  );
 }
 
 function statusFor(isError: boolean, result: unknown): ToolStatus {

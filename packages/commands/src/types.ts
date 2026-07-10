@@ -18,6 +18,10 @@ export interface CommandContext {
   openSessionPicker?(): void;
   /** Directly switch to a model by id or provider/model reference. */
   setModel?(id: string): void;
+  /** Set the reasoning effort ("default"/"" clears). Absent when unsupported. */
+  setEffort?(level: string): void;
+  /** Open the reasoning-effort picker UI. */
+  openEffortPicker?(): void;
   /** Show the help / keybindings UI. */
   showHelp(): void;
   /** Exit the app. */

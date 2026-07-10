@@ -23,6 +23,10 @@ export interface AppSettings {
   permissions?: PermissionConfig;
   /** MRU model refs, newest first. */
   recentModels?: ModelRef[];
+  /** Per-model reasoning-effort selections, keyed "providerID/modelID". */
+  reasoningEfforts?: Record<string, string>;
+  /** Show model context window sizes in the model picker. */
+  showContextSize?: boolean;
 }
 
 export interface AppSettingsInput extends AppSettings {}
@@ -82,6 +86,7 @@ export const IPC = {
   sessionAbort: "session:abort",
   sessionSetMode: "session:set-mode",
   sessionSetModel: "session:set-model",
+  sessionSetEffort: "session:set-effort",
   sessionSetPreset: "session:set-preset",
   permissionReply: "permission:reply",
   // sessions
@@ -123,6 +128,7 @@ export interface CozyApi {
   abort(): Promise<void>;
   setMode(mode: AgentMode): Promise<void>;
   setModel(ref: ModelRef): Promise<void>;
+  setEffort(effort?: string): Promise<void>;
   setPreset(preset: PermissionPreset): Promise<void>;
   replyPermission(body: PermissionReplyBody): Promise<void>;
 
