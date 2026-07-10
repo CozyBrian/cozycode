@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useApp } from "../store/app-store";
-import { ToolCard } from "../components/ToolCard";
+import { ContextToolGroup, ToolCard } from "../components/ToolCard";
+import { isContextTool, type ToolItem } from "../components/tool-presentation.ts";
 import type { TranscriptItem } from "../transcript.ts";
 import { Markdown } from "./Markdown";
 
@@ -40,16 +41,38 @@ export function Transcript() {
   const items = useApp((s) => s.items);
   const busy = useApp((s) => s.busy);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const followingRef = useRef(true);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+    if (followingRef.current) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [items, busy]);
 
+  const rows: Array<TranscriptItem | ToolItem[]> = [];
+  for (const item of items) {
+    const previous = rows.at(-1);
+    if (isContextTool(item) && Array.isArray(previous)) {
+      previous.push(item);
+    } else if (isContextTool(item)) {
+      rows.push([item]);
+    } else {
+      rows.push(item);
+    }
+  }
+
   return (
-    <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+    <div
+      ref={scrollRef}
+      onScroll={(event) => {
+        const element = event.currentTarget;
+        followingRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 96;
+      }}
+      className="min-h-0 flex-1 overflow-y-auto"
+    >
       <div className="mx-auto flex max-w-[760px] flex-col gap-4 px-6 py-6">
-        {items.map((item) => (
-          <Row key={item.id} item={item} />
+        {rows.map((row) => (
+          Array.isArray(row)
+            ? <ContextToolGroup key={row[0]?.id} items={row} />
+            : <Row key={row.id} item={row} />
         ))}
         {busy && !items.some((i) => i.kind === "assistant" && i.streaming) && (
           <div className="text-sm text-muted-foreground">working…</div>

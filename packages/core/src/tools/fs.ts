@@ -1,5 +1,6 @@
 import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { dirname } from "node:path";
+import { createTwoFilesPatch } from "diff";
 import { z } from "zod";
 import { defineTool } from "./types.ts";
 import { resolveInWorkspace } from "./paths.ts";
@@ -42,8 +43,10 @@ export const writeFileTool = defineTool({
     `Write ${content.length} bytes to ${path}`,
   async run({ path, content }, ctx) {
     const abs = resolveInWorkspace(ctx.workspaceRoot, path);
+    const previous = await readFile(abs, "utf8").catch(() => "");
     await mkdir(dirname(abs), { recursive: true });
     await writeFile(abs, content, "utf8");
+    ctx.reportMetadata?.({ diff: createPatch(path, previous, content) });
     return { path, bytesWritten: Buffer.byteLength(content, "utf8") };
   },
 });
@@ -87,6 +90,7 @@ export const editFileTool = defineTool({
       ? original.split(oldString).join(newString)
       : original.replace(oldString, newString);
     await writeFile(abs, updated, "utf8");
+    ctx.reportMetadata?.({ diff: createPatch(path, original, updated) });
     return { path, replacements: replaceAll ? occurrences : 1 };
   },
 });
@@ -100,4 +104,8 @@ function countOccurrences(haystack: string, needle: string): number {
     idx = haystack.indexOf(needle, idx + needle.length);
   }
   return count;
+}
+
+function createPatch(path: string, oldText: string, newText: string): string {
+  return createTwoFilesPatch(path, path, oldText, newText, "", "", { context: 3 });
 }

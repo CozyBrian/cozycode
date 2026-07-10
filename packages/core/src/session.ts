@@ -45,6 +45,7 @@ export class Session {
   private baseRuleset: Ruleset;
   private readonly permissions: PermissionService;
   private readonly tools: ReturnType<typeof buildTools>;
+  private readonly toolMetadata = new Map<string, Record<string, unknown>>();
   private agent: ToolLoopAgent;
   private currentModel: string;
   private currentMode: AgentMode;
@@ -74,6 +75,7 @@ export class Session {
       ctx: { workspaceRoot: config.workspaceRoot },
       permissions: this.permissions,
       getMode: () => this.currentMode,
+      reportToolMetadata: (toolCallId, metadata) => this.toolMetadata.set(toolCallId, metadata),
     });
     this.currentModel = config.model;
     // A pre-built model can be injected (tests, custom wrapping); otherwise we
@@ -230,22 +232,32 @@ export class Session {
         });
         break;
       case "tool-result":
+      {
+        const toolCallId = part.toolCallId as string;
         this.events.push({
           type: "tool-result",
-          toolCallId: part.toolCallId as string,
+          toolCallId,
           toolName: part.toolName as string,
           result: part.output,
           isError: false,
+          metadata: this.toolMetadata.get(toolCallId),
         });
+        this.toolMetadata.delete(toolCallId);
+      }
         break;
       case "tool-error":
+      {
+        const toolCallId = part.toolCallId as string;
         this.events.push({
           type: "tool-result",
-          toolCallId: part.toolCallId as string,
+          toolCallId,
           toolName: part.toolName as string,
           result: part.error,
           isError: true,
+          metadata: this.toolMetadata.get(toolCallId),
         });
+        this.toolMetadata.delete(toolCallId);
+      }
         break;
       case "finish-step":
         this.events.push({ type: "step-finish", stepNumber: ++this.stepCounter });

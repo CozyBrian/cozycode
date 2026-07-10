@@ -6,6 +6,8 @@ export interface ToolContext {
   workspaceRoot: string;
   /** Cancellation signal for the current turn. */
   abortSignal?: AbortSignal;
+  /** Attach frontend-only presentation data to this tool call. */
+  reportMetadata?: (metadata: Record<string, unknown>) => void;
 }
 
 /**

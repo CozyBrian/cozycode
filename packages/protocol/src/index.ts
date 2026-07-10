@@ -163,6 +163,8 @@ export type SessionEvent =
       toolName: string;
       result: unknown;
       isError: boolean;
+      /** Frontend-only display data; never returned to the model as tool output. */
+      metadata?: Record<string, unknown>;
     }
   | { type: "step-finish"; stepNumber: number }
   | { type: "error"; message: string }

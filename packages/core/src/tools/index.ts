@@ -69,6 +69,7 @@ export interface BuildToolsOptions {
   ctx: ToolContext;
   permissions: PermissionService;
   getMode: () => AgentMode;
+  reportToolMetadata: (toolCallId: string, metadata: Record<string, unknown>) => void;
 }
 
 /**
@@ -76,7 +77,7 @@ export interface BuildToolsOptions {
  * the permission service. A denied/rejected call resolves to a structured
  * denial (rather than throwing) so the model can see it and adapt.
  */
-export function buildTools({ ctx, permissions, getMode }: BuildToolsOptions): ToolSet {
+export function buildTools({ ctx, permissions, getMode, reportToolMetadata }: BuildToolsOptions): ToolSet {
   const set: ToolSet = {};
   for (const def of TOOL_DEFS) {
     set[def.name] = tool({
@@ -111,7 +112,11 @@ export function buildTools({ ctx, permissions, getMode }: BuildToolsOptions): To
           throw err;
         }
 
-        return def.run(args, { ...ctx, abortSignal: options.abortSignal });
+        return def.run(args, {
+          ...ctx,
+          abortSignal: options.abortSignal,
+          reportMetadata: (metadata) => reportToolMetadata(options.toolCallId, metadata),
+        });
       },
     });
   }

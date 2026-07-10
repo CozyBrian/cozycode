@@ -194,6 +194,9 @@ describe("Session (integration, mock model)", () => {
 
     const toolResult = events.find((e) => e.type === "tool-result");
     expect(toolResult && "isError" in toolResult && toolResult.isError).toBe(false);
+    expect(toolResult && "metadata" in toolResult && toolResult.metadata?.diff).toContain(
+      "+hello from the agent",
+    );
 
     const text = events
       .filter((e): e is Extract<SessionEvent, { type: "text-delta" }> => e.type === "text-delta")

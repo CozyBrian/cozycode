@@ -9,6 +9,7 @@ import type { PermissionConfig, SessionConfig } from "@cozycode/protocol";
 import { rulesetFromConfig } from "@cozycode/core";
 import { App } from "../src/app.tsx";
 import { Markdown } from "../src/components/Markdown.tsx";
+import { ToolRow } from "../src/components/ToolRow.tsx";
 
 const usage = { inputTokens: 5, outputTokens: 5, totalTokens: 10 } as const;
 const step = (parts: LanguageModelV4StreamPart[]) => ({
@@ -100,7 +101,7 @@ describe("TUI App (integration, mock model)", () => {
     app.renderer.destroy();
   });
 
-  test("runs an allowed tool call and renders the inline diff", async () => {
+  test("runs an allowed tool call and renders a contextual diff", async () => {
     const app = await renderApp(
       "allow",
       "auto-approved content",
@@ -114,10 +115,55 @@ describe("TUI App (integration, mock model)", () => {
     expect(await readFile(join(root, "out.txt"), "utf8")).toBe("auto-approved content");
     await app.flush();
     const frame = app.captureCharFrame();
-    expect(frame).toContain("write_file");
+    expect(frame).toContain("Wrote out.txt");
     expect(frame).toContain("make the file");
     expect(frame).toContain("auto-approved content");
     app.renderer.destroy();
+  });
+
+  test("renders compact search rows and shell output panels", async () => {
+    const search = await testRender(
+      <box width={100}>
+        <ToolRow
+          item={{
+            id: "search",
+            kind: "tool",
+            toolCallId: "search",
+            toolName: "search",
+            args: { pattern: "TODO", path: "src" },
+            status: "done",
+            result: { matches: ["src/a.ts:1:// TODO", "src/b.ts:2:// TODO"] },
+          }}
+        />
+      </box>,
+      { width: 100, height: 4 },
+    );
+    await search.flush();
+    expect(search.captureCharFrame()).toContain('Grep "TODO" in src (2 matches)');
+    search.renderer.destroy();
+
+    const shell = await testRender(
+      <box width={100}>
+        <ToolRow
+          item={{
+            id: "shell",
+            kind: "tool",
+            toolCallId: "shell",
+            toolName: "run_shell",
+            args: { command: "bun test", cwd: "apps/tui" },
+            status: "done",
+            result: { stdout: "10 pass", stderr: "", timedOut: false, truncated: false },
+          }}
+        />
+      </box>,
+      { width: 100, height: 8 },
+    );
+    await shell.flush();
+    const frame = shell.captureCharFrame();
+    expect(frame).toContain("Running in apps/tui");
+    expect(frame).toContain("$ bun test");
+    expect(frame).toContain("10 pass");
+    shell.renderer.destroy();
   });
 
   test("renders assistant markdown without crashing", async () => {

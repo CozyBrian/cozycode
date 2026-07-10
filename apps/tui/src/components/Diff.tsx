@@ -1,13 +1,14 @@
-import { createTwoFilesPatch } from "diff";
+import { useTerminalDimensions } from "@opentui/react";
 import { syntaxStyle, theme } from "../theme.ts";
 
-export function Diff({ oldText, newText }: { oldText: string; newText: string }) {
-  const patch = createTwoFilesPatch("before", "after", oldText, newText, "", "", { context: 3 });
+export function Diff({ patch }: { patch: string }) {
+  const dimensions = useTerminalDimensions();
 
   return (
     <diff
       diff={patch}
-      view="unified"
+      view={(dimensions.width || 0) > 120 ? "split" : "unified"}
+      width="100%"
       fg={theme.text}
       syntaxStyle={syntaxStyle}
       addedBg={theme.diff.addedBg}

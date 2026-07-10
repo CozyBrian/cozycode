@@ -13,6 +13,7 @@ export type TranscriptItem =
       args: unknown;
       status: ToolStatus;
       result?: unknown;
+      metadata?: Record<string, unknown>;
     }
   | { id: string; kind: "error"; text: string }
   | { id: string; kind: "system"; text: string };
@@ -50,16 +51,18 @@ export function foldEvent(items: TranscriptItem[], event: SessionEvent): Transcr
     case "tool-result":
       return items.map((it) =>
         it.kind === "tool" && it.toolCallId === event.toolCallId
-          ? { ...it, status: statusFor(event.isError, event.result), result: event.result }
+          ? {
+              ...it,
+              status: statusFor(event.isError, event.result),
+              result: event.result,
+              metadata: event.metadata,
+            }
           : it,
       );
     case "error":
       return [...items, { id: nextId(), kind: "error", text: event.message }];
     case "finish":
-      // Stop the streaming indicator on the last assistant message.
-      return items.map((it, i) =>
-        i === items.length - 1 && it.kind === "assistant" ? { ...it, streaming: false } : it,
-      );
+      return items.map((it) => (it.kind === "assistant" ? { ...it, streaming: false } : it));
     default:
       return items; // session-start, permission-asked/replied, step-finish, mode-change are not rendered directly
   }

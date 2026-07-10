@@ -13,6 +13,7 @@ export type RenderItem =
       args: unknown;
       status: ToolStatus;
       result?: unknown;
+      metadata?: Record<string, unknown>;
     }
   | { id: string; kind: "error"; text: string }
   | { id: string; kind: "system"; text: string };
@@ -58,7 +59,7 @@ export function foldTurn(items: RenderItem[], event: SessionEvent): RenderItem[]
     case "tool-result":
       return items.map((it) =>
         it.kind === "tool" && it.toolCallId === event.toolCallId
-          ? { ...it, status: statusFor(event.isError, event.result), result: event.result }
+          ? { ...it, status: statusFor(event.isError, event.result), result: event.result, metadata: event.metadata }
           : it,
       );
     case "error":
