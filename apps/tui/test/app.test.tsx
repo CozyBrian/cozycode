@@ -189,7 +189,9 @@ describe("TUI App (integration, mock model)", () => {
     app.mockInput.pressEnter();
 
     // The approval prompt should appear and the file must NOT exist yet.
-    await app.waitForFrame((frame) => frame.includes("Approve action?"));
+    await app.waitForFrame((frame) => frame.includes("Permission required"));
+    expect(app.captureCharFrame()).toContain("Allow once");
+    expect(app.captureCharFrame()).toContain("Allow always");
     expect(await fileExists("out.txt")).toBe(false);
 
     // "Allow once" is the first option — pressing enter selects it.
@@ -236,6 +238,17 @@ describe("TUI App (integration, mock model)", () => {
       await app.flush();
       return !app.captureCharFrame().includes("Switch model");
     });
+    app.renderer.destroy();
+  });
+
+  test("opens the searchable session switcher with /sessions", async () => {
+    const app = await renderApp("allow", "x");
+    await app.flush();
+    await app.mockInput.typeText("/sessions");
+    app.mockInput.pressEnter();
+    await app.waitForFrame((frame) => frame.includes("Switch session"));
+    expect(app.captureCharFrame()).toContain("New session");
+    app.mockInput.pressEscape();
     app.renderer.destroy();
   });
 

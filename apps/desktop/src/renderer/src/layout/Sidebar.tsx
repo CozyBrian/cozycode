@@ -1,9 +1,5 @@
-import { useMemo, useState } from "react";
-import {
-  FolderClosed,
-  Search as SearchIcon,
-  SquarePen,
-} from "lucide-react";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { FolderClosed, Search as SearchIcon, SquarePen } from "lucide-react";
 import { useApp } from "../store/app-store";
 import type { SessionMeta } from "../../../shared/ipc.ts";
 import { SidebarSessionRow } from "./SidebarSessionRow";
@@ -44,11 +40,15 @@ function projectName(root: string): string {
 
 export function Sidebar() {
   const open = useApp((s) => s.sidebarOpen);
+  const width = useApp((s) => s.sidebarWidth);
+  const setWidth = useApp((s) => s.setSidebarWidth);
   const sessions = useApp((s) => s.sessions);
   const createSession = useApp((s) => s.createSession);
   const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState("");
   const now = Date.now();
+
+  const asideRef = useRef<HTMLElement>(null);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -70,14 +70,32 @@ export function Sidebar() {
     return { projects: [...byProject.entries()], chats: standalone };
   }, [filtered]);
 
+  const onResizeStart = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      const el = asideRef.current;
+      if (el) el.style.transition = "none";
+      const startX = e.clientX;
+      const startW = width;
+      const onMove = (ev: PointerEvent) => setWidth(startW + (ev.clientX - startX));
+      const onUp = () => {
+        if (el) el.style.transition = "";
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [width, setWidth],
+  );
+
   return (
     <aside
-      className={cn(
-        "h-full shrink-0 overflow-hidden bg-sidebar backdrop-blur-2xl transition-[width] duration-200 ease-out",
-        open ? "w-72.5 border-r border-sidebar-border" : "w-0 border-r-0",
-      )}
+      ref={asideRef}
+      className="relative h-full shrink-0 overflow-hidden bg-sidebar backdrop-blur-2xl transition-[max-width] duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]"
+      style={{ maxWidth: open ? `${width}px` : "0px" }}
     >
-      <div className="flex h-full w-72.5 flex-col">
+      <div className="flex h-full flex-col" style={{ width }}>
         <TitleBar />
 
         {/* Top actions */}
@@ -143,6 +161,15 @@ export function Sidebar() {
 
         <SidebarFooter />
       </div>
+      {/* Resize handle */}
+      {open ? (
+        <div
+          onPointerDown={onResizeStart}
+          className="absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize"
+        />
+      ) : null}
+      {/* Border sits inside the clippable area so it disappears when collapsed */}
+      <div className="pointer-events-none absolute inset-y-0 right-0 w-px bg-sidebar-border" />
     </aside>
   );
 }

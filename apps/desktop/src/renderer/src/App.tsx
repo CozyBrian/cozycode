@@ -1,10 +1,12 @@
 import { useEffect } from "react";
+import { preloadHighlighter } from "@pierre/diffs";
 import { useApp } from "./store/app-store";
 import { useGlobalShortcuts } from "./lib/shortcuts";
 import { AppLayout } from "./layout/AppLayout";
 import { SettingsPage } from "./components/SettingsPage";
 import { PermissionModal } from "./components/PermissionModal";
 import { Help } from "./components/Help";
+import { TextShimmer } from "./components/TextShimmer";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 export function App() {
@@ -20,6 +22,7 @@ export function App() {
   // Bootstrap settings + active session once.
   useEffect(() => {
     void useApp.getState().bootstrap();
+    void preloadHighlighter({ themes: ["pierre-dark"], langs: ["text"] });
   }, []);
 
   // Subscribe to the main-process push streams for the app's lifetime.
@@ -42,8 +45,13 @@ export function App() {
 
   if (!loaded) {
     return (
-      <div className="flex h-screen items-center justify-center text-muted-foreground">
-        Loading…
+      <div className="flex h-screen items-center justify-center">
+        <TextShimmer
+          className="text-2xl font-semibold tracking-tight [--base-color:var(--color-cozy-400)] [--base-gradient-color:var(--color-cozy-200)]"
+          duration={1.5}
+        >
+          cozycode
+        </TextShimmer>
       </div>
     );
   }

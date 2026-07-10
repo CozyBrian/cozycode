@@ -27,8 +27,11 @@ export interface AppState {
 
   // ui
   sidebarOpen: boolean;
+  sidebarWidth: number;
   terminalOpen: boolean;
   terminalHeight: number;
+  contentPanelOpen: boolean;
+  contentPanelWidth: number;
   settingsOpen: boolean;
   settingsSection: SettingsSection;
   helpOpen: boolean;
@@ -58,8 +61,11 @@ export interface AppState {
   applyEvent(event: SessionEvent): void;
 
   toggleSidebar(): void;
+  setSidebarWidth(px: number): void;
   toggleTerminal(): void;
+  toggleContentPanel(): void;
   setTerminalHeight(px: number): void;
+  setContentPanelWidth(px: number): void;
   openSettings(section?: SettingsSection): void;
   closeSettings(): void;
   setHelpOpen(open: boolean): void;
@@ -112,8 +118,11 @@ export const useApp = create<AppState>((set, get) => ({
   loaded: false,
 
   sidebarOpen: true,
+  sidebarWidth: 290,
   terminalOpen: false,
   terminalHeight: 260,
+  contentPanelOpen: false,
+  contentPanelWidth: 320,
   settingsOpen: false,
   settingsSection: "general",
   helpOpen: false,
@@ -181,8 +190,11 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
+  setSidebarWidth: (px) => set({ sidebarWidth: Math.max(200, Math.min(450, px)) }),
   toggleTerminal: () => set((s) => ({ terminalOpen: !s.terminalOpen })),
+  toggleContentPanel: () => set((s) => ({ contentPanelOpen: !s.contentPanelOpen })),
   setTerminalHeight: (px) => set({ terminalHeight: Math.max(120, Math.min(600, px)) }),
+  setContentPanelWidth: (px) => set({ contentPanelWidth: Math.max(200, Math.min(600, px)) }),
   openSettings: (section = "general") => set({ settingsOpen: true, settingsSection: section }),
   closeSettings: () => set({ settingsOpen: false }),
   setHelpOpen: (open) => set({ helpOpen: open }),

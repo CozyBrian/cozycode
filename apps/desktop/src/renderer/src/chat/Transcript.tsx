@@ -68,7 +68,7 @@ export function Transcript() {
       }}
       className="min-h-0 flex-1 overflow-y-auto"
     >
-      <div className="mx-auto flex max-w-[760px] flex-col gap-4 px-6 py-6">
+      <div className="mx-auto flex max-w-190 flex-col gap-4 px-6 py-6">
         {rows.map((row) => (
           Array.isArray(row)
             ? <ContextToolGroup key={row[0]?.id} items={row} />

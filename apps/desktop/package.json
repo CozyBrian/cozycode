@@ -24,6 +24,7 @@
     "cmdk": "^1.1.1",
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.500.0",
+    "motion": "^12.42.2",
     "radix-ui": "^1.6.2",
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.2",

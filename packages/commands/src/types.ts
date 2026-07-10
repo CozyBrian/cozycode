@@ -14,6 +14,8 @@ export interface CommandContext {
   openModelPicker(): void;
   /** Open the provider-connection UI. */
   openProviderPicker(): void;
+  /** Open the session switcher when the frontend supports multiple sessions. */
+  openSessionPicker?(): void;
   /** Directly switch to a model by id or provider/model reference. */
   setModel?(id: string): void;
   /** Show the help / keybindings UI. */

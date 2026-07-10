@@ -31,8 +31,8 @@ export function Sidebar({ modelLabel, mode, workspaceRoot, usage, items, overlay
       height="100%"
       flexShrink={0}
       backgroundColor={theme.panel}
-      border={overlay ? true : ["left"]}
-      borderStyle={overlay ? "rounded" : "single"}
+      border={overlay ? true : undefined}
+      borderStyle="single"
       borderColor={theme.border}
       paddingX={2}
       paddingY={1}
@@ -41,6 +41,11 @@ export function Sidebar({ modelLabel, mode, workspaceRoot, usage, items, overlay
       top={overlay ? 0 : undefined}
       zIndex={overlay ? 50 : undefined}
     >
+      <scrollbox flexGrow={1}>
+      <box flexDirection="column" paddingRight={1}>
+      <text fg={theme.text}><b>CozyCode session</b></text>
+      <text fg={theme.muted}>{shortPath(workspaceRoot)}</text>
+      <box height={1} />
       <Section title="Mode">
         {mode === "plan" ? (
           <text fg={theme.accent}>PLAN (read-only)</text>
@@ -86,6 +91,9 @@ export function Sidebar({ modelLabel, mode, workspaceRoot, usage, items, overlay
         )}
         {files.length > 12 ? <text fg={theme.muted}>{`+${files.length - 12} more`}</text> : null}
       </Section>
+      </box>
+      </scrollbox>
+      <text fg={theme.muted}><span style={{ fg: theme.success }}>•</span> CozyCode</text>
     </box>
   );
 }

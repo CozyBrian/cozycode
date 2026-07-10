@@ -1,4 +1,4 @@
-import { PanelBottom } from "lucide-react";
+import { PanelBottom, PanelRight } from "lucide-react";
 import { useApp } from "../store/app-store";
 import { Transcript } from "./Transcript";
 import { Composer } from "./Composer";
@@ -46,7 +46,9 @@ function projectLabel(root: string | null | undefined): string {
 function ChatHeader({ title, active }: { title: string; active: boolean }) {
   const sidebarOpen = useApp((s) => s.sidebarOpen);
   const terminalOpen = useApp((s) => s.terminalOpen);
+  const contentPanelOpen = useApp((s) => s.contentPanelOpen);
   const toggleTerminal = useApp((s) => s.toggleTerminal);
+  const toggleContentPanel = useApp((s) => s.toggleContentPanel);
 
   return (
     <header
@@ -64,6 +66,9 @@ function ChatHeader({ title, active }: { title: string; active: boolean }) {
       <div className="flex items-center gap-1">
         <HeaderButton label="Toggle terminal  ⌘J" onClick={toggleTerminal} active={terminalOpen}>
           <PanelBottom className="size-4" />
+        </HeaderButton>
+        <HeaderButton label="Toggle panel  ⌘\\" onClick={toggleContentPanel} active={contentPanelOpen}>
+          <PanelRight className="size-4" />
         </HeaderButton>
       </div>
     </header>

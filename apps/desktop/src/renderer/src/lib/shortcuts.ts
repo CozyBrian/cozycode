@@ -20,6 +20,10 @@ export function useGlobalShortcuts(): void {
           e.preventDefault();
           s.toggleTerminal();
           break;
+        case "\\":
+          e.preventDefault();
+          s.toggleContentPanel();
+          break;
         case "n":
           e.preventDefault();
           void s.createSession();

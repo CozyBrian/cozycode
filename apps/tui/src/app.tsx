@@ -30,6 +30,7 @@ import { Logo } from "./components/Logo.tsx";
 import { ModelDialog } from "./components/ModelDialog.tsx";
 import { ProviderDialog } from "./components/ProviderDialog.tsx";
 import { Prompt } from "./components/Prompt.tsx";
+import { SessionDialog, type TuiSessionEntry } from "./components/SessionDialog.tsx";
 import { Sidebar } from "./components/Sidebar.tsx";
 import { StatusFooter } from "./components/StatusFooter.tsx";
 import { Viewport } from "./components/Viewport.tsx";
@@ -48,7 +49,7 @@ export interface AppProps {
   onExit?: () => void;
 }
 
-type Overlay = "commands" | "help" | "model" | "provider" | null;
+type Overlay = "commands" | "help" | "model" | "provider" | "sessions" | null;
 
 const EMPTY_PROVIDERS: ProviderList = { all: [], connected: [] };
 
@@ -65,23 +66,43 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
   const [recents, setRecents] = useState<ModelRef[]>(initialModel ? [initialModel] : []);
   const [sidebarOverride, setSidebarOverride] = useState<boolean | null>(null);
   const [mode, setMode] = useState<AgentMode>(initialSession?.mode ?? "build");
+  const [sessions, setSessions] = useState<TuiSessionEntry[]>([]);
+  const [activeSessionID, setActiveSessionID] = useState<string | null>(null);
 
   // The active turn's items live in a ref (mutated as events stream in); `bump`
   // forces a re-render so the streaming tail stays live below the log.
   const turnRef = useRef<RenderItem[]>([]);
   const [, bump] = useReducer((x: number) => x + 1, 0);
   const sessionRef = useRef<Session | null>(null);
+  const sessionsRef = useRef(new Map<string, TuiSessionEntry>());
+  const activeSessionIDRef = useRef<string | null>(null);
+  const historyRef = useRef<RenderItem[]>([]);
+  const usageRef = useRef<TokenUsage | undefined>(undefined);
   // Tracks the live model so a fresh session (after /new) keeps the selection.
   const modelRef = useRef<ModelRef | null>(initialModel);
   const registryProvidersRef = useRef(new Set<string>());
   // Tracks the live mode so a fresh session (after /new) keeps the selection.
   const modeRef = useRef<AgentMode>(initialSession?.mode ?? "build");
 
+  useEffect(() => {
+    historyRef.current = history;
+  }, [history]);
+
+  useEffect(() => {
+    usageRef.current = usage;
+  }, [usage]);
+
   const pumpSession = (session: Session) => {
     const flush = () => {
       if (sessionRef.current !== session) return;
       const turn = turnRef.current;
-      if (turn.length > 0) setHistory((h) => [...h, ...finalizeTurn(turn)]);
+      if (turn.length > 0) {
+        setHistory((h) => {
+          const next = [...h, ...finalizeTurn(turn)];
+          historyRef.current = next;
+          return next;
+        });
+      }
       turnRef.current = [];
     };
 
@@ -96,6 +117,7 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
         } else if (event.type === "permission-replied") {
           setPermissionQueue((q) => q.filter((r) => r.id !== event.requestId));
         } else if (event.type === "finish") {
+          usageRef.current = event.usage;
           setUsage(event.usage);
           flush();
           setBusy(false);
@@ -126,16 +148,48 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
     };
   };
 
-  const startSession = async (ref: ModelRef, preserveHistory: boolean) => {
+  const startSession = async (
+    ref: ModelRef,
+    preserveHistory: boolean,
+    id?: string,
+    initialHistory?: SessionOptions["initialHistory"],
+  ) => {
     const previous = sessionRef.current;
-    const initialHistory = preserveHistory ? previous?.snapshotHistory() : undefined;
+    const carriedHistory = initialHistory ?? (preserveHistory ? previous?.snapshotHistory() : undefined);
     const config = await sessionConfig(ref);
     previous?.close();
-    const options = initialHistory ? { ...sessionOptions, initialHistory } : sessionOptions;
+    const options = {
+      ...sessionOptions,
+      ...(carriedHistory ? { initialHistory: carriedHistory } : {}),
+      ...(id ? { id } : {}),
+    };
     const session = createSession(config, options);
     sessionRef.current = session;
     pumpSession(session);
     return session;
+  };
+
+  const publishSessions = () => setSessions([...sessionsRef.current.values()]);
+
+  const saveActiveSession = () => {
+    const session = sessionRef.current;
+    const selected = modelRef.current;
+    if (!session || !selected) return;
+    const id = activeSessionIDRef.current ?? session.id;
+    const firstPrompt = historyRef.current.find((item) => item.kind === "user");
+    const title = firstPrompt?.kind === "user" ? firstPrompt.text.replace(/\s+/g, " ").slice(0, 56) : "New session";
+    sessionsRef.current.set(id, {
+      id,
+      title,
+      history: historyRef.current,
+      model: selected,
+      mode: modeRef.current,
+      usage: usageRef.current,
+      coreHistory: session.snapshotHistory(),
+    });
+    activeSessionIDRef.current = id;
+    setActiveSessionID(id);
+    publishSessions();
   };
 
   useEffect(() => {
@@ -219,6 +273,17 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
       setOverlay((current) => (current === "model" ? null : "model"));
       return;
     }
+    // Ctrl+L is reported as "clear" by some terminal emulators.
+    if (key.ctrl && (key.name === "l" || key.name === "clear")) {
+      if (busy) return;
+      saveActiveSession();
+      setOverlay("sessions");
+      return;
+    }
+    if (key.ctrl && key.name === "n") {
+      if (!busy) void newSession();
+      return;
+    }
     if (key.ctrl && key.name === "b") {
       setSidebarOverride((current) => !(current ?? wide));
       return;
@@ -228,10 +293,12 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
       setOverlay(null);
       return;
     }
-    if (key.name === "escape" && busy) sessionRef.current?.abort();
+    if (key.name === "escape" && busy && permissionQueue.length === 0) sessionRef.current?.abort();
   });
 
-  const resetChat = () => {
+  const newSession = async () => {
+    if (busy) return;
+    saveActiveSession();
     sessionRef.current?.close();
     sessionRef.current = null;
     setPermissionQueue([]);
@@ -239,10 +306,52 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
     setHistory([]);
     turnRef.current = [];
     setUsage(undefined);
+    usageRef.current = undefined;
     setInputKey((k) => k + 1);
     bump();
     const selected = modelRef.current;
-    if (selected) void startSession(selected, false);
+    if (!selected) return setOverlay("provider");
+    try {
+      const session = await startSession(selected, false);
+      activeSessionIDRef.current = session.id;
+      setActiveSessionID(session.id);
+      sessionsRef.current.set(session.id, {
+        id: session.id,
+        title: "New session",
+        history: [],
+        model: selected,
+        mode: modeRef.current,
+        coreHistory: [],
+      });
+      publishSessions();
+      setOverlay(null);
+    } catch (error) {
+      commandCtx.notify("error", error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const switchSession = async (id: string) => {
+    const entry = sessionsRef.current.get(id);
+    if (!entry || id === activeSessionIDRef.current || busy) return setOverlay(null);
+    saveActiveSession();
+    modelRef.current = entry.model;
+    modeRef.current = entry.mode;
+    setModel(entry.model);
+    setMode(entry.mode);
+    setHistory(entry.history);
+    historyRef.current = entry.history;
+    setUsage(entry.usage);
+    usageRef.current = entry.usage;
+    setPermissionQueue([]);
+    turnRef.current = [];
+    try {
+      await startSession(entry.model, false, entry.id, entry.coreHistory);
+      activeSessionIDRef.current = entry.id;
+      setActiveSessionID(entry.id);
+      setOverlay(null);
+    } catch (error) {
+      commandCtx.notify("error", error instanceof Error ? error.message : String(error));
+    }
   };
 
   const selectModel = (next: ModelRef) => {
@@ -297,7 +406,12 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
   const commandCtx: CommandContext = {
     setMode: switchMode,
     setModel: switchModel,
-    newSession: resetChat,
+    newSession: () => void newSession(),
+    openSessionPicker: () => {
+      if (busy) return;
+      saveActiveSession();
+      setOverlay("sessions");
+    },
     openModelPicker: () => setOverlay("model"),
     openProviderPicker: () => setOverlay("provider"),
     showHelp: () => setOverlay("help"),
@@ -388,7 +502,7 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
   return (
     <box flexDirection="column" height={rows || undefined} backgroundColor={theme.bg}>
       <box flexDirection="row" flexGrow={rows ? 1 : undefined}>
-        <box flexGrow={1} flexDirection="column" overflow={rows ? "hidden" : undefined}>
+        <box flexGrow={1} flexDirection="column" overflow={rows ? "hidden" : undefined} paddingX={2} paddingBottom={1}>
           {showHome ? (
             <box flexGrow={rows ? 1 : undefined} flexDirection="column" alignItems="center" justifyContent={rows ? "center" : undefined}>
               <Logo />
@@ -419,13 +533,25 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
               onCancel={() => setOverlay(modelRef.current ? null : "provider")}
             />
           ) : null}
+          {overlay === "sessions" ? (
+            <SessionDialog
+              sessions={sessions}
+              activeID={activeSessionID}
+              onSelect={(id) => void switchSession(id)}
+              onCancel={() => setOverlay(null)}
+            />
+          ) : null}
           <box flexShrink={0} flexDirection="column" marginTop={1}>
             {approval ? <ApprovalPrompt request={approval} queueLength={permissionQueue.length} onRespond={respond} /> : overlay ? null : <Prompt busy={busy} inputKey={inputKey} modelLabel={modelLabel} mode={mode} workspaceRoot={workspaceRoot} usage={usage} onSubmit={submit} onToggleMode={toggleMode} />}
             <StatusFooter modelLabel={modelLabel} mode={mode} workspaceRoot={workspaceRoot} busy={busy} approvals={permissionQueue.length} />
           </box>
         </box>
-        {sidebarVisible ? (
-          <Sidebar modelLabel={modelLabel} mode={mode} workspaceRoot={workspaceRoot} usage={usage} items={items} overlay={sidebarOverlay} />
+        {sidebarVisible ? sidebarOverlay ? (
+          <box position="absolute" top={0} right={0} bottom={0} left={0} alignItems="flex-end" backgroundColor="#00000055" zIndex={40}>
+            <Sidebar modelLabel={modelLabel} mode={mode} workspaceRoot={workspaceRoot} usage={usage} items={items} overlay />
+          </box>
+        ) : (
+          <Sidebar modelLabel={modelLabel} mode={mode} workspaceRoot={workspaceRoot} usage={usage} items={items} />
         ) : null}
       </box>
     </box>
