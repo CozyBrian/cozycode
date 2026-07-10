@@ -11,6 +11,14 @@ export {
   type AskInput,
 } from "./permission/service.ts";
 export { wildcardMatch } from "./permission/wildcard.ts";
+export { QuestionService, QuestionRejectedError, type AskQuestionInput } from "./question/service.ts";
+export {
+  loadAgents,
+  parseAgentMarkdown,
+  deriveSubagentRuleset,
+  BUILTIN_AGENTS,
+  EXPLORE_RULESET,
+} from "./agents.ts";
 export { prefix } from "./permission/arity.ts";
 export { commandPatterns, type BashPermissionInput } from "./permission/bash-patterns.ts";
 export {
@@ -44,7 +52,8 @@ export {
   PLAN_MODE_DENIAL_MESSAGE,
   DEFAULT_MAX_STEPS,
 } from "./config.ts";
-export type { ToolDef, ToolContext } from "./tools/types.ts";
+export type { ToolDef, ToolContext, SpawnSubagentFn } from "./tools/types.ts";
+export { askUserTool } from "./tools/ask-user.ts";
 /** Re-exported so frontends can type persisted history without depending on `ai`. */
 export type { ModelMessage } from "ai";
 

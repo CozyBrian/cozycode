@@ -12,14 +12,117 @@ import {
   toolLabel,
 } from "./tool-presentation.ts";
 import { ToolDiff } from "./ToolDiff.tsx";
+import { useApp } from "../store/app-store";
 import { cn } from "@/lib/utils";
 
 export function ToolCard({ item }: { item: ToolItem }) {
+  if (item.toolName === "task" && item.subagent) return <SubagentCard item={item} />;
+  if (item.toolName === "ask_user") return <QuestionCard item={item} />;
+  if (item.toolName === "todowrite") return <TodoCard item={item} />;
   if (item.toolName === "run_shell") return <ShellTool item={item} />;
-  if ((item.toolName === "write_file" || item.toolName === "edit_file") && diffPayload(item)) {
+  if (
+    (item.toolName === "write_file" || item.toolName === "edit_file" || item.toolName === "apply_patch") &&
+    diffPayload(item)
+  ) {
     return <FileChangeTool item={item} />;
   }
   return <InlineTool item={item} />;
+}
+
+/** A finished `ask_user` call: shows each question and the chosen answers. */
+function QuestionCard({ item }: { item: ToolItem }) {
+  const meta = record(item.metadata);
+  const questions = Array.isArray(meta?.questions)
+    ? (meta.questions as Array<{ question?: string; header?: string }>)
+    : [];
+  const answers = Array.isArray(meta?.answers) ? (meta.answers as string[][]) : [];
+  if (questions.length === 0) return <InlineTool item={item} />;
+  return (
+    <section className="rounded-lg border border-border/60 bg-card/30 px-3 py-2.5 text-sm">
+      <p className="mb-1.5 text-xs font-medium text-muted-foreground">Asked the user</p>
+      <div className="flex flex-col gap-2">
+        {questions.map((q, i) => (
+          <div key={i}>
+            <p className="text-foreground">{q.question ?? q.header ?? ""}</p>
+            <p className="text-primary">→ {(answers[i] ?? []).join(", ") || "(no answer)"}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** The agent's todo checklist from a todowrite call's metadata. */
+function TodoCard({ item }: { item: ToolItem }) {
+  const meta = record(item.metadata);
+  const todos = Array.isArray(meta?.todos)
+    ? (meta.todos as Array<{ content?: string; status?: string }>)
+    : [];
+  if (todos.length === 0) return <InlineTool item={item} />;
+  const done = todos.filter((t) => t.status === "completed").length;
+  const glyph: Record<string, string> = { completed: "✔", in_progress: "▸", cancelled: "✗", pending: "○" };
+  return (
+    <section className="rounded-lg border border-border/60 bg-card/30 px-3 py-2.5 text-sm">
+      <p className="mb-1.5 text-xs font-medium text-muted-foreground">
+        Todos ({done}/{todos.length})
+      </p>
+      <div className="flex flex-col gap-1">
+        {todos.map((todo, i) => {
+          const status = todo.status ?? "pending";
+          return (
+            <div
+              key={i}
+              className={cn(
+                "flex items-baseline gap-2",
+                status === "completed" && "text-muted-foreground line-through",
+                status === "in_progress" && "text-foreground",
+                status === "cancelled" && "text-muted-foreground line-through",
+                status === "pending" && "text-foreground/80",
+              )}
+            >
+              <span className={cn("shrink-0", status === "in_progress" ? "text-primary" : "text-muted-foreground")}>
+                {glyph[status] ?? "○"}
+              </span>
+              <span>{todo.content ?? ""}</span>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+/** A `task` subagent call: agent, live status, and a read-only drill-in link. */
+function SubagentCard({ item }: { item: ToolItem }) {
+  const sub = item.subagent!;
+  const viewSubagent = useApp((s) => s.viewSubagent);
+  const toolCount = sub.items.filter((it) => it.kind === "tool").length;
+  const status =
+    sub.status === "done"
+      ? "completed"
+      : sub.status === "error"
+        ? "failed"
+        : `running · ${toolCount} ${toolCount === 1 ? "tool call" : "tool calls"}`;
+  return (
+    <section className="rounded-lg border border-border/60 bg-card/30 px-3 py-2.5 text-sm">
+      <div className="flex items-center gap-2">
+        <span className="text-primary">▸</span>
+        <span className="font-medium text-foreground">{sub.agent}</span>
+        <span className="truncate text-muted-foreground">{sub.description}</span>
+        <span className="ml-auto text-xs text-muted-foreground">{status}</span>
+      </div>
+      {sub.result && sub.status !== "running" && (
+        <p className="mt-1.5 line-clamp-2 text-xs text-muted-foreground">{sub.result}</p>
+      )}
+      <button
+        type="button"
+        onClick={() => viewSubagent(sub.sessionId)}
+        className="mt-2 text-xs text-primary hover:underline"
+      >
+        View subagent →
+      </button>
+    </section>
+  );
 }
 
 export function ContextToolGroup({ items }: { items: ToolItem[] }) {
@@ -123,8 +226,14 @@ function FileChangeTool({ item }: { item: ToolItem }) {
   const id = useId();
   const patch = diffPayload(item);
   if (!patch) return <InlineTool item={item} />;
-  const path = stringArg(item.args, "path") ?? "file";
-  const action = item.toolName === "write_file" ? "Wrote" : "Edited";
+  const fileCount = Array.isArray(record(item.result)?.files)
+    ? (record(item.result)!.files as unknown[]).length
+    : 0;
+  const path =
+    item.toolName === "apply_patch"
+      ? `${fileCount || ""} ${fileCount === 1 ? "file" : "files"}`.trim()
+      : stringArg(item.args, "path") ?? "file";
+  const action = item.toolName === "apply_patch" ? "Patched" : item.toolName === "write_file" ? "Wrote" : "Edited";
   const counts = changeCounts(patch);
 
   return (

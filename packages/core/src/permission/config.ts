@@ -54,6 +54,10 @@ export const DEFAULT_RULESET: Ruleset = rulesetFromConfig({
   read: "allow",
   search: "allow",
   edit: "ask",
+  // Delegating to a subagent is allowed by default (overridable to ask/deny).
+  task: "allow",
+  // Maintaining the todo checklist is harmless bookkeeping — never prompt.
+  todowrite: "allow",
   bash: {
     "*": "ask",
     // read-only / non-mutating programs

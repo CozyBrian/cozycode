@@ -5,6 +5,7 @@ import type {
   PermissionReply,
   PermissionRequest,
   ProviderList,
+  QuestionRequest,
   SessionEvent,
 } from "@cozycode/protocol";
 import type {
@@ -42,6 +43,8 @@ export interface AppState {
   // sessions
   sessions: SessionMeta[];
   activeId: string | null;
+  /** When set, the transcript shows a read-only view of this subagent (by child session id). */
+  subagentView: string | null;
 
   // active chat
   items: TranscriptItem[];
@@ -54,6 +57,8 @@ export interface AppState {
   recentModels: ModelRef[];
   /** FIFO of pending permission asks; the modal shows the head, badge shows length. */
   permissionQueue: PermissionRequest[];
+  /** FIFO of pending `ask_user` questions; the modal shows the head. */
+  questionQueue: QuestionRequest[];
   input: string;
 
   // terminals
@@ -78,6 +83,9 @@ export interface AppState {
   setInput(v: string): void;
   setSettings(s: AppSettings): void;
 
+  viewSubagent(sessionId: string): void;
+  exitSubagent(): void;
+
   refreshSessions(): Promise<void>;
   createSession(workspaceRoot?: string | null): Promise<void>;
   activateSession(id: string): Promise<void>;
@@ -93,6 +101,8 @@ export interface AppState {
   setEffort(effort: string | undefined): void;
   refreshProviders(): Promise<void>;
   replyPermission(requestId: string, reply: PermissionReply, message?: string): void;
+  answerQuestion(requestId: string, answers: string[][]): void;
+  rejectQuestion(requestId: string): void;
   systemNote(text: string, error?: boolean): void;
 
   newTerminal(): Promise<void>;
@@ -148,6 +158,7 @@ export const useApp = create<AppState>((set, get) => ({
 
   sessions: [],
   activeId: null,
+  subagentView: null,
 
   items: [],
   busy: false,
@@ -157,6 +168,7 @@ export const useApp = create<AppState>((set, get) => ({
   providers: null,
   recentModels: [],
   permissionQueue: [],
+  questionQueue: [],
   input: "",
 
   termTabs: [],
@@ -206,6 +218,12 @@ export const useApp = create<AppState>((set, get) => ({
       // Covers cascade-reject and always-grant of siblings too — no extra logic.
       set((s) => ({ permissionQueue: s.permissionQueue.filter((r) => r.id !== event.requestId) }));
     }
+    if (event.type === "question-asked") {
+      set((s) => ({ questionQueue: [...s.questionQueue, event.request] }));
+    }
+    if (event.type === "question-answered" || event.type === "question-rejected") {
+      set((s) => ({ questionQueue: s.questionQueue.filter((r) => r.id !== event.requestId) }));
+    }
     if (event.type === "effort-change") set({ effort: event.effort });
     if (event.type === "finish" || event.type === "error") set({ busy: false });
   },
@@ -223,6 +241,11 @@ export const useApp = create<AppState>((set, get) => ({
   setEffortPickerOpen: (open) => set({ effortPickerOpen: open }),
   setInput: (v) => set({ input: v }),
   setSettings: (s) => set({ settings: s }),
+
+  // Read-only drill-in into a running/finished subagent. Does NOT touch the live
+  // main-process session, so the subagent keeps running in the background.
+  viewSubagent: (sessionId) => set({ subagentView: sessionId }),
+  exitSubagent: () => set({ subagentView: null }),
 
   async refreshSessions() {
     set({ sessions: await window.cozy.listSessions() });
@@ -247,6 +270,8 @@ export const useApp = create<AppState>((set, get) => ({
       busy: false,
       input: "",
       permissionQueue: [],
+      questionQueue: [],
+      subagentView: null,
     });
     await get().refreshSessions();
   },
@@ -263,6 +288,8 @@ export const useApp = create<AppState>((set, get) => ({
       busy: false,
       input: "",
       permissionQueue: [],
+      questionQueue: [],
+      subagentView: null,
     });
   },
 
@@ -277,6 +304,8 @@ export const useApp = create<AppState>((set, get) => ({
         effort: storedEffort(get(), snap.meta.model),
         busy: false,
         permissionQueue: [],
+      questionQueue: [],
+      subagentView: null,
       });
     }
     await get().refreshSessions();
@@ -356,6 +385,16 @@ export const useApp = create<AppState>((set, get) => ({
     // Optimistically drop from the queue; the replied event confirms it (idempotent).
     set((s) => ({ permissionQueue: s.permissionQueue.filter((r) => r.id !== requestId) }));
     void window.cozy.replyPermission({ requestId, reply, message });
+  },
+
+  answerQuestion(requestId, answers) {
+    set((s) => ({ questionQueue: s.questionQueue.filter((r) => r.id !== requestId) }));
+    void window.cozy.replyQuestion({ requestId, answers });
+  },
+
+  rejectQuestion(requestId) {
+    set((s) => ({ questionQueue: s.questionQueue.filter((r) => r.id !== requestId) }));
+    void window.cozy.replyQuestion({ requestId, answers: null });
   },
 
   systemNote(text, error) {

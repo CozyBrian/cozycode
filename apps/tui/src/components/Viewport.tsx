@@ -8,6 +8,7 @@ import { Item } from "./Item.tsx";
 interface Props {
   items: RenderItem[];
   inputEnabled: boolean;
+  onOpenSubagent?: (sessionId: string) => void;
 }
 
 /**
@@ -16,7 +17,7 @@ interface Props {
  * and stays put once the user scrolls up. Mouse wheel is handled natively;
  * keys drive page/line/home/end scrolling.
  */
-export function Viewport({ items, inputEnabled }: Props) {
+export function Viewport({ items, inputEnabled, onOpenSubagent }: Props) {
   const scroll = useRef<ScrollBoxRenderable | null>(null);
 
   useKeyboard((key) => {
@@ -43,7 +44,7 @@ export function Viewport({ items, inputEnabled }: Props) {
       }}
     >
       {items.map((item) => (
-        <Item key={item.id} item={item} />
+        <Item key={item.id} item={item} onOpenSubagent={onOpenSubagent} />
       ))}
     </scrollbox>
   );

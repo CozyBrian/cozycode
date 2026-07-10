@@ -34,6 +34,9 @@ export function toolLabel(item: ToolItem): string {
       : `Glob \"${stringArg(item.args, "glob") ?? "*"}\"${scope}${count}`;
   }
   if (item.toolName === "run_shell") return `Shell ${stringArg(item.args, "command") ?? ""}`.trim();
+  if (item.toolName === "webfetch") return `Fetch ${stringArg(item.args, "url") ?? ""}`.trim();
+  if (item.toolName === "websearch") return `Search "${stringArg(item.args, "query") ?? ""}"`;
+  if (item.toolName === "apply_patch") return "Apply patch";
   return item.toolName.replaceAll("_", " ");
 }
 
@@ -43,6 +46,9 @@ export function pendingLabel(item: ToolItem): string {
   if (item.toolName === "write_file") return "Writing file";
   if (item.toolName === "edit_file") return "Editing file";
   if (item.toolName === "run_shell") return "Running command";
+  if (item.toolName === "webfetch") return "Fetching URL";
+  if (item.toolName === "websearch") return "Searching the web";
+  if (item.toolName === "apply_patch") return "Applying patch";
   return `Running ${item.toolName.replaceAll("_", " ")}`;
 }
 

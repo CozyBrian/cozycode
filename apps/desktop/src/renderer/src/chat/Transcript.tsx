@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ArrowLeft } from "lucide-react";
 import { pickSpinnerVerb } from "@cozycode/commands";
 import { useApp } from "../store/app-store";
 import { ContextToolGroup, ToolCard } from "../components/ToolCard";
@@ -7,6 +8,32 @@ import { TextShimmer } from "../components/TextShimmer";
 import { isContextTool, type ToolItem } from "../components/tool-presentation.ts";
 import type { TranscriptItem } from "../transcript.ts";
 import { Markdown } from "./Markdown";
+
+/** Group context reads/searches and render a list of transcript items. */
+function renderRows(items: TranscriptItem[]) {
+  const rows: Array<TranscriptItem | ToolItem[]> = [];
+  for (const item of items) {
+    const previous = rows.at(-1);
+    if (isContextTool(item) && Array.isArray(previous)) previous.push(item);
+    else if (isContextTool(item)) rows.push([item]);
+    else rows.push(item);
+  }
+  return rows.map((row) =>
+    Array.isArray(row) ? (
+      <ContextToolGroup key={row[0]?.id} items={row} />
+    ) : (
+      <Row key={row.id} item={row} />
+    ),
+  );
+}
+
+/** Find a subagent block by its child session id across the transcript. */
+function findSubagent(items: TranscriptItem[], sessionId: string) {
+  for (const item of items) {
+    if (item.kind === "tool" && item.subagent?.sessionId === sessionId) return item.subagent;
+  }
+  return null;
+}
 
 function Row({ item }: { item: TranscriptItem }) {
   switch (item.kind) {
@@ -44,6 +71,8 @@ function Row({ item }: { item: TranscriptItem }) {
 export function Transcript() {
   const items = useApp((s) => s.items);
   const busy = useApp((s) => s.busy);
+  const subagentView = useApp((s) => s.subagentView);
+  const exitSubagent = useApp((s) => s.exitSubagent);
   const scrollRef = useRef<HTMLDivElement>(null);
   const followingRef = useRef(true);
   const [verb, setVerb] = useState(() => pickSpinnerVerb());
@@ -55,20 +84,39 @@ export function Transcript() {
     return () => clearInterval(interval);
   }, [busy]);
 
+  const subagent = subagentView ? findSubagent(items, subagentView) : null;
+
   useEffect(() => {
     if (followingRef.current) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [items, busy]);
+  }, [items, busy, subagent?.items]);
 
-  const rows: Array<TranscriptItem | ToolItem[]> = [];
-  for (const item of items) {
-    const previous = rows.at(-1);
-    if (isContextTool(item) && Array.isArray(previous)) {
-      previous.push(item);
-    } else if (isContextTool(item)) {
-      rows.push([item]);
-    } else {
-      rows.push(item);
-    }
+  // Read-only drill-in view of a subagent (the live parent turn keeps running).
+  if (subagentView && subagent) {
+    return (
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto flex max-w-190 flex-col gap-4 px-6 py-6">
+          <div className="flex items-center gap-2 border-b border-border/60 pb-3">
+            <button
+              type="button"
+              onClick={exitSubagent}
+              className="flex items-center gap-1 rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
+            >
+              <ArrowLeft className="size-4" />
+              Back
+            </button>
+            <span className="text-sm font-medium text-foreground">{subagent.agent}</span>
+            <span className="truncate text-sm text-muted-foreground">{subagent.description}</span>
+            <span className="ml-auto text-xs text-muted-foreground">
+              {subagent.status === "running" ? "running…" : subagent.status === "error" ? "failed" : "completed"}
+            </span>
+          </div>
+          {renderRows(subagent.items)}
+          {subagent.status === "running" && (
+            <TextShimmer className="text-sm">Working…</TextShimmer>
+          )}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -81,14 +129,10 @@ export function Transcript() {
       className="min-h-0 flex-1 overflow-y-auto"
     >
       <div className="mx-auto flex max-w-190 flex-col gap-4 px-6 py-6">
-        {rows.map((row) => (
-          Array.isArray(row)
-            ? <ContextToolGroup key={row[0]?.id} items={row} />
-            : <Row key={row.id} item={row} />
-        ))}
-            {busy && !items.some((i) => i.kind === "assistant" && i.streaming) && (
-              <TextShimmer className="text-sm">{`${verb}…`}</TextShimmer>
-            )}
+        {renderRows(items)}
+        {busy && !items.some((i) => i.kind === "assistant" && i.streaming) && (
+          <TextShimmer className="text-sm">{`${verb}…`}</TextShimmer>
+        )}
       </div>
     </div>
   );

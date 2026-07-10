@@ -6,6 +6,7 @@ import { useGlobalShortcuts } from "./lib/shortcuts";
 import { AppLayout } from "./layout/AppLayout";
 import { SettingsPage } from "./components/SettingsPage";
 import { PermissionModal } from "./components/PermissionModal";
+import { QuestionModal } from "./components/QuestionModal";
 import { Help } from "./components/Help";
 import { TextShimmer } from "./components/TextShimmer";
 import { TitleControls } from "./layout/TitleBar";
@@ -15,9 +16,12 @@ export function App() {
   const loaded = useApp((s) => s.loaded);
   const settingsOpen = useApp((s) => s.settingsOpen);
   const permissionQueue = useApp((s) => s.permissionQueue);
+  const questionQueue = useApp((s) => s.questionQueue);
   const helpOpen = useApp((s) => s.helpOpen);
   const setHelpOpen = useApp((s) => s.setHelpOpen);
   const replyPermission = useApp((s) => s.replyPermission);
+  const answerQuestion = useApp((s) => s.answerQuestion);
+  const rejectQuestion = useApp((s) => s.rejectQuestion);
 
   useGlobalShortcuts();
 
@@ -74,6 +78,13 @@ export function App() {
           onReply={(reply, message) =>
             replyPermission(permissionQueue[0]!.id, reply, message)
           }
+        />
+      )}
+      {!permissionQueue[0] && questionQueue[0] && (
+        <QuestionModal
+          request={questionQueue[0]}
+          onAnswer={(answers) => answerQuestion(questionQueue[0]!.id, answers)}
+          onReject={() => rejectQuestion(questionQueue[0]!.id)}
         />
       )}
       <Help open={helpOpen} onClose={() => setHelpOpen(false)} />

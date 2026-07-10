@@ -29,6 +29,7 @@ const api: CozyApi = {
   setEffort: (effort?: string) => ipcRenderer.invoke(IPC.sessionSetEffort, effort ?? null),
   setPreset: (preset: PermissionPreset) => ipcRenderer.invoke(IPC.sessionSetPreset, preset),
   replyPermission: (body: PermissionReplyBody) => ipcRenderer.invoke(IPC.permissionReply, body),
+  replyQuestion: (body) => ipcRenderer.invoke(IPC.questionReply, body),
 
   listSessions: () => ipcRenderer.invoke(IPC.sessionsList),
   createSession: (opts) => ipcRenderer.invoke(IPC.sessionsCreate, opts ?? {}),

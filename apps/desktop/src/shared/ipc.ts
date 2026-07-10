@@ -6,6 +6,7 @@ import type {
   OAuthStart,
   PermissionConfig,
   PermissionReplyBody,
+  QuestionReplyBody,
   SessionEvent,
   ProviderList,
 } from "@cozycode/protocol";
@@ -16,6 +17,8 @@ export type {
   OAuthResult,
   OAuthStart,
   ProviderList,
+  QuestionRequest,
+  QuestionReplyBody,
 } from "@cozycode/protocol";
 
 export interface AppSettings {
@@ -48,6 +51,10 @@ export interface SessionMeta {
   preset: PermissionPreset;
   /** Number of user turns. */
   messageCount: number;
+  /** Set → this is a subagent (child) session, grouped under its parent. */
+  parentID?: string | null;
+  /** The subagent type that produced this child session (for labeling). */
+  agent?: string;
 }
 
 /**
@@ -89,6 +96,7 @@ export const IPC = {
   sessionSetEffort: "session:set-effort",
   sessionSetPreset: "session:set-preset",
   permissionReply: "permission:reply",
+  questionReply: "question:reply",
   // sessions
   sessionsList: "sessions:list",
   sessionsCreate: "sessions:create",
@@ -131,6 +139,7 @@ export interface CozyApi {
   setEffort(effort?: string): Promise<void>;
   setPreset(preset: PermissionPreset): Promise<void>;
   replyPermission(body: PermissionReplyBody): Promise<void>;
+  replyQuestion(body: QuestionReplyBody): Promise<void>;
 
   // session management
   listSessions(): Promise<SessionMeta[]>;

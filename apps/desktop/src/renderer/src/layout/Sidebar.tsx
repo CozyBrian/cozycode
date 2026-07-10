@@ -51,8 +51,11 @@ export function Sidebar() {
   const asideRef = useRef<HTMLElement>(null);
 
   const filtered = useMemo(() => {
+    // Subagent (child) sessions are reached via their parent's task card, not the
+    // top-level list.
+    const top = sessions.filter((s) => !s.parentID);
     const q = query.trim().toLowerCase();
-    return q ? sessions.filter((s) => s.title.toLowerCase().includes(q)) : sessions;
+    return q ? top.filter((s) => s.title.toLowerCase().includes(q)) : top;
   }, [sessions, query]);
 
   const { projects, chats } = useMemo(() => {

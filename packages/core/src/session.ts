@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { ToolLoopAgent, isStepCount, type LanguageModel, type ModelMessage } from "ai";
 import type {
+  AgentInfo,
   AgentMode,
   PermissionReply,
   PermissionRequest,
+  QuestionRequest,
   Ruleset,
   SessionConfig,
   SessionEvent,
@@ -12,8 +14,11 @@ import type {
 import { createModel } from "./model.ts";
 import { reasoningProviderOptions } from "./reasoning.ts";
 import { PermissionService } from "./permission/service.ts";
+import { QuestionService } from "./question/service.ts";
 import { DEFAULT_RULESET, PLAN_RULESET, mergeRulesets } from "./permission/config.ts";
+import { deriveSubagentRuleset } from "./agents.ts";
 import { buildTools } from "./tools/index.ts";
+import type { SpawnSubagentFn } from "./tools/types.ts";
 import { AsyncEventQueue } from "./events.ts";
 import {
   DEFAULT_MAX_STEPS,
@@ -29,6 +34,12 @@ export interface SessionOptions {
   id?: string;
   /** Seed the conversation history so context carries across a resume/rebuild. */
   initialHistory?: ModelMessage[];
+  /** Agent registry; enables the `task` tool for primary sessions. */
+  agents?: AgentInfo[];
+  /** Marks this as a subagent (child) session: no interactive tools, no `task` tool. */
+  isSubagent?: boolean;
+  /** Test hook: build a child model for a spawned subagent (bypasses the provider). */
+  spawnModel?: (agent: AgentInfo) => LanguageModel | undefined;
 }
 
 /**
@@ -45,8 +56,11 @@ export class Session {
   /** The base (build-mode) ruleset; the plan overlay is applied per mode. */
   private baseRuleset: Ruleset;
   private readonly permissions: PermissionService;
+  private readonly questions: QuestionService;
   private readonly tools: ReturnType<typeof buildTools>;
   private readonly toolMetadata = new Map<string, Record<string, unknown>>();
+  /** Live child (subagent) sessions, so a parent abort tears them down. */
+  private readonly children = new Map<string, Session>();
   private agent: ToolLoopAgent;
   private currentModel: string;
   private currentMode: AgentMode;
@@ -60,6 +74,81 @@ export class Session {
   // The model used to build the current agent, retained so a mode change can
   // rebuild with the same model rather than reconstructing the provider model.
   private activeModel: LanguageModel;
+  /** Test hook: build a child model for a spawned subagent. */
+  private subagentSpawnModel?: (agent: AgentInfo) => LanguageModel | undefined;
+
+  /**
+   * Spawn a subagent as an isolated child `Session`, funnel its events up this
+   * session's queue (wrapped), and resolve with its final assistant text. The
+   * parent is the sole consumer of the child's queue; child permission asks are
+   * auto-rejected (a subagent has no one to prompt). Defined as a bound field so
+   * it can be injected into `buildTools` without leaking `Session` into tools.
+   */
+  private readonly spawnSubagent: SpawnSubagentFn = async ({
+    agent,
+    prompt,
+    description,
+    parentToolCallId,
+    signal,
+  }) => {
+    const childConfig: SessionConfig = {
+      ...this.config,
+      model: agent.model?.modelID ?? this.currentModel,
+      systemPrompt: agent.prompt ?? this.config.systemPrompt,
+      permissions: deriveSubagentRuleset(this.baseRuleset, agent),
+      mode: "build",
+      maxSteps: agent.steps ?? this.config.maxSteps,
+      reasoningEffort: this.currentEffort,
+    };
+    const injected = this.subagentSpawnModel?.(agent);
+    const child = new Session(childConfig, {
+      isSubagent: true,
+      ...(injected ? { model: injected } : {}),
+    });
+    this.children.set(child.id, child);
+    this.events.push({
+      type: "subagent-start",
+      toolCallId: parentToolCallId,
+      sessionId: child.id,
+      agent: agent.name,
+      description,
+    });
+
+    let text = "";
+    const pump = (async () => {
+      for await (const event of child.events) {
+        if (event.type === "text-delta") text += event.text;
+        // Subagents can't prompt the user: auto-reject any permission ask.
+        if (event.type === "permission-asked") {
+          child.replyPermission(event.request.id, "reject", "Subagents cannot request interactive permission.");
+        }
+        this.events.push({
+          type: "subagent-event",
+          toolCallId: parentToolCallId,
+          sessionId: child.id,
+          event,
+        });
+      }
+    })();
+
+    const onAbort = () => child.abort();
+    signal?.addEventListener("abort", onAbort);
+    try {
+      await child.send(prompt);
+    } finally {
+      signal?.removeEventListener("abort", onAbort);
+      child.close(); // closes child.events → the pump loop drains and ends
+      await pump;
+      this.children.delete(child.id);
+    }
+    this.events.push({
+      type: "subagent-finish",
+      toolCallId: parentToolCallId,
+      sessionId: child.id,
+      result: text,
+    });
+    return { text, sessionId: child.id };
+  };
 
   constructor(
     private readonly config: SessionConfig,
@@ -75,11 +164,19 @@ export class Session {
       this.id,
       (e) => this.events.push(e),
     );
+    this.questions = new QuestionService(this.id, (e) => this.events.push(e));
+    const isSubagent = options.isSubagent ?? false;
+    this.subagentSpawnModel = options.spawnModel;
     this.tools = buildTools({
       ctx: { workspaceRoot: config.workspaceRoot },
       permissions: this.permissions,
+      questions: this.questions,
       getMode: () => this.currentMode,
       reportToolMetadata: (toolCallId, metadata) => this.toolMetadata.set(toolCallId, metadata),
+      // Subagents have no one to answer prompts and must not recurse.
+      interactive: !isSubagent,
+      agents: isSubagent ? [] : (options.agents ?? []),
+      spawnSubagent: isSubagent ? undefined : this.spawnSubagent,
     });
     this.currentModel = config.model;
     this.currentEffort = config.reasoningEffort;
@@ -134,6 +231,21 @@ export class Session {
   /** The permission asks currently awaiting a decision (for UI resync). */
   pendingPermissions(): PermissionRequest[] {
     return this.permissions.listPending();
+  }
+
+  /** Answer a pending `ask_user` question. Safe to call with an unknown/stale id. */
+  answerQuestion(requestId: string, answers: string[][]): void {
+    this.questions.answer(requestId, answers);
+  }
+
+  /** Decline a pending question (user cancelled). Surfaces as an error to the model. */
+  rejectQuestion(requestId: string, message?: string): void {
+    this.questions.reject(requestId, message);
+  }
+
+  /** The questions currently awaiting an answer (for UI resync). */
+  pendingQuestions(): QuestionRequest[] {
+    return this.questions.listPending();
   }
 
   /**
@@ -226,12 +338,15 @@ export class Session {
     }
   }
 
-  /** Abort the in-flight turn, if any. Also rejects any parked permission asks. */
+  /** Abort the in-flight turn, if any. Also rejects any parked permission/question asks. */
   abort(): void {
     this.abortController?.abort();
     // Without this, a tool call parked on a pending ask stays suspended forever
     // even after the stream is aborted, keeping the turn open.
     this.permissions.rejectAll();
+    this.questions.rejectAll();
+    // Cascade to any live subagents so their turns end too.
+    for (const child of this.children.values()) child.abort();
   }
 
   /** Close the event stream; call when the session is being torn down. */

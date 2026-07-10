@@ -148,6 +148,67 @@ export type PermissionConfig =
  */
 export type AgentMode = "build" | "plan";
 
+// ── Interactive questions ──────────────────────────────────────────────────────
+//
+// The model can ask the user one or more questions and block on the answers,
+// mirroring the permission round-trip: a `question-asked` event carries the
+// request, the frontend renders a prompt, and it replies via a `QuestionReplyBody`.
+
+export interface QuestionOption {
+  label: string;
+  description?: string;
+}
+
+export interface QuestionSpec {
+  /** The full question text. */
+  question: string;
+  /** A short label/title for the question (shown as a step/tab header). */
+  header: string;
+  /** Selectable options; the UI always also offers a free-text "type your own" choice. */
+  options: QuestionOption[];
+  /** Allow selecting more than one option. */
+  multiple?: boolean;
+}
+
+export interface QuestionRequest {
+  /** Ascending id ("qst_<n>"); correlates the ask with its reply. */
+  id: string;
+  sessionId: string;
+  questions: QuestionSpec[];
+  tool?: { callId: string; toolName: string };
+}
+
+export interface QuestionReplyBody {
+  requestId: string;
+  /** Per-question arrays of chosen/typed values; `null` declines (rejects) the ask. */
+  answers: string[][] | null;
+}
+
+// ── Agents ─────────────────────────────────────────────────────────────────────
+
+/**
+ * A named agent definition. `primary` agents are user-selectable top-level modes;
+ * `subagent` agents are only invocable via the `task` tool; `all` is both.
+ * Built-ins ship in core; `config` agents load from markdown-with-frontmatter.
+ */
+export interface AgentInfo {
+  name: string;
+  description?: string;
+  mode: "primary" | "subagent" | "all";
+  /** Pinned model; when absent the subagent inherits the parent's model. */
+  model?: ModelRef;
+  /** System-prompt override for the agent. */
+  prompt?: string;
+  /** Permission policy (from frontmatter `tools`/`permission`). */
+  permission?: PermissionConfig;
+  temperature?: number;
+  /** Per-agent cap on agentic steps per turn. */
+  steps?: number;
+  hidden?: boolean;
+  color?: string;
+  source: "builtin" | "config";
+}
+
 // ── Session event stream ─────────────────────────────────────────────────────
 
 export interface TokenUsage {
@@ -189,6 +250,18 @@ export type SessionEvent =
   | { type: "permission-asked"; request: PermissionRequest }
   /** A pending permission ask was resolved (by the user, or by cascade/always). */
   | { type: "permission-replied"; requestId: string; reply: PermissionReply }
+  /** The model is asking the user one or more questions and awaiting answers. */
+  | { type: "question-asked"; request: QuestionRequest }
+  /** A pending question was answered (per-question arrays of chosen/typed values). */
+  | { type: "question-answered"; requestId: string; answers: string[][] }
+  /** A pending question was declined (user cancelled, or turn aborted). */
+  | { type: "question-rejected"; requestId: string }
+  /** A subagent (child session) was spawned by a `task` tool call. */
+  | { type: "subagent-start"; toolCallId: string; sessionId: string; agent: string; description: string }
+  /** A child session event, wrapped so the parent frontend can render it nested. */
+  | { type: "subagent-event"; toolCallId: string; sessionId: string; event: SessionEvent }
+  /** A subagent finished; `result` is its final assistant text. */
+  | { type: "subagent-finish"; toolCallId: string; sessionId: string; result: string; isError?: boolean }
   | { type: "finish"; reason: string; usage?: TokenUsage };
 
 // ── Config ───────────────────────────────────────────────────────────────────

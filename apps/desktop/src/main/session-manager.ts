@@ -2,6 +2,7 @@ import type { WebContents } from "electron";
 import { homedir } from "node:os";
 import {
   createSession,
+  loadAgents,
   mergeRulesets,
   rulesetFromConfig,
   type Session,
@@ -9,6 +10,7 @@ import {
 import type {
   AgentMode,
   PermissionReplyBody,
+  QuestionReplyBody,
   ModelRef,
   SessionConfig,
   SessionEvent,
@@ -82,9 +84,11 @@ export class SessionManager {
     // close() cascade-rejects any parked permission asks on the old session.
     this.session?.close();
     this.configKey = key;
+    const agents = await loadAgents({ workspaceRoot: config.workspaceRoot }).catch(() => []);
     this.session = createSession(config, {
       id: meta.id,
       initialHistory,
+      agents,
     });
     this.pump(this.session, meta.id);
     return this.session;
@@ -217,10 +221,24 @@ export class SessionManager {
 
   private async pump(session: Session, sessionId: string): Promise<void> {
     for await (const event of session.events) {
-      // Permission asks/replies are live-only control events; persisting them
+      // Subagents run in the background of the parent turn; their wrapped events
+      // are persisted to the PARENT log so replay reconstructs the nested block,
+      // and the renderer folds them into a read-only drill-in view. (No separate
+      // child session — activating one would tear the live parent session down.)
+      // Permission/question asks are live-only control events; persisting them
       // would resurrect stale modals on replay.
-      if (event.type !== "permission-asked" && event.type !== "permission-replied") {
-        this.store.appendEvent(sessionId, event);
+      const liveOnly =
+        event.type === "permission-asked" ||
+        event.type === "permission-replied" ||
+        event.type === "question-asked" ||
+        event.type === "question-answered" ||
+        event.type === "question-rejected";
+      if (!liveOnly) {
+        try {
+          this.store.appendEvent(sessionId, event);
+        } catch {
+          // A persistence hiccup must never break event forwarding to the UI.
+        }
       }
       if (this.web.isDestroyed()) return;
       this.web.send(IPC.sessionEvent, event);
@@ -229,6 +247,11 @@ export class SessionManager {
 
   replyPermission(body: PermissionReplyBody): void {
     this.session?.replyPermission(body.requestId, body.reply, body.message);
+  }
+
+  replyQuestion(body: QuestionReplyBody): void {
+    if (body.answers === null) this.session?.rejectQuestion(body.requestId);
+    else this.session?.answerQuestion(body.requestId, body.answers);
   }
 
   async send(message: string): Promise<{ ok: boolean; error?: string }> {

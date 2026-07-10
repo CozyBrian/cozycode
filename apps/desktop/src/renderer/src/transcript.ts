@@ -14,6 +14,16 @@ export type TranscriptItem =
       status: ToolStatus;
       result?: unknown;
       metadata?: Record<string, unknown>;
+      /** Present on `task` calls; drilled into read-only via the renderer. */
+      subagent?: {
+        sessionId: string;
+        agent: string;
+        description: string;
+        status: "running" | "done" | "error";
+        result?: string;
+        /** The child's folded transcript, for the drill-in view + live status. */
+        items: TranscriptItem[];
+      };
     }
   | { id: string; kind: "error"; text: string }
   | { id: string; kind: "system"; text: string }
@@ -87,6 +97,43 @@ export function foldEvent(items: TranscriptItem[], event: SessionEvent): Transcr
             }
           : it,
       );
+    case "subagent-start":
+      return items.map((it) =>
+        it.kind === "tool" && it.toolCallId === event.toolCallId
+          ? {
+              ...it,
+              subagent: {
+                sessionId: event.sessionId,
+                agent: event.agent,
+                description: event.description,
+                status: "running",
+                items: [],
+              },
+            }
+          : it,
+      );
+    case "subagent-event":
+      return items.map((it) =>
+        it.kind === "tool" && it.toolCallId === event.toolCallId && it.subagent
+          ? { ...it, subagent: { ...it.subagent, items: foldEvent(it.subagent.items, event.event) } }
+          : it,
+      );
+    case "subagent-finish":
+      return items.map((it) =>
+        it.kind === "tool" && it.toolCallId === event.toolCallId && it.subagent
+          ? {
+              ...it,
+              subagent: {
+                ...it.subagent,
+                status: event.isError ? "error" : "done",
+                result: event.result,
+                items: it.subagent.items.map((x) =>
+                  x.kind === "assistant" || x.kind === "reasoning" ? { ...x, streaming: false } : x,
+                ),
+              },
+            }
+          : it,
+      );
     case "error":
       return [...items, { id: nextId(), kind: "error", text: event.message }];
     case "finish":
@@ -94,7 +141,7 @@ export function foldEvent(items: TranscriptItem[], event: SessionEvent): Transcr
         it.kind === "assistant" || it.kind === "reasoning" ? { ...it, streaming: false } : it,
       );
     default:
-      return items; // session-start, permission-asked/replied, step-finish, mode-change, effort-change are not rendered directly
+      return items; // session-start, permission/question control events, step-finish, mode/effort-change are not rendered directly
   }
 }
 

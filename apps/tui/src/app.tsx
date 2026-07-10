@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
-import { createSession, registry, type Session, type SessionOptions } from "@cozycode/core";
+import { createSession, loadAgents, registry, type Session, type SessionOptions } from "@cozycode/core";
 import {
   cycleEffort,
   effortsForModel,
@@ -13,11 +13,13 @@ import {
   type CommandContext,
 } from "@cozycode/commands";
 import type {
+  AgentInfo,
   AgentMode,
   ModelRef,
   PermissionReply,
   PermissionRequest,
   ProviderList,
+  QuestionRequest,
   SessionConfig,
   TokenUsage,
 } from "@cozycode/protocol";
@@ -28,6 +30,7 @@ import {
   type RenderItem,
 } from "./transcript.ts";
 import { ApprovalPrompt } from "./components/ApprovalPrompt.tsx";
+import { QuestionPrompt } from "./components/QuestionPrompt.tsx";
 import { CommandPalette } from "./components/CommandPalette.tsx";
 import { EffortDialog } from "./components/EffortDialog.tsx";
 import { Help } from "./components/Help.tsx";
@@ -38,6 +41,7 @@ import { Prompt } from "./components/Prompt.tsx";
 import { SessionDialog, type TuiSessionEntry } from "./components/SessionDialog.tsx";
 import { Sidebar } from "./components/Sidebar.tsx";
 import { StatusFooter } from "./components/StatusFooter.tsx";
+import { SubagentView } from "./components/SubagentView.tsx";
 import { Viewport } from "./components/Viewport.tsx";
 import { theme } from "./theme.ts";
 import { loadProviders } from "./providers.ts";
@@ -66,6 +70,7 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
   const [history, setHistory] = useState<RenderItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [permissionQueue, setPermissionQueue] = useState<PermissionRequest[]>([]);
+  const [questionQueue, setQuestionQueue] = useState<QuestionRequest[]>([]);
   const [usage, setUsage] = useState<TokenUsage | undefined>();
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [inputKey, setInputKey] = useState(0);
@@ -77,6 +82,8 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
   const [effort, setEffort] = useState<string | undefined>(initialSession?.reasoningEffort);
   const [sessions, setSessions] = useState<TuiSessionEntry[]>([]);
   const [activeSessionID, setActiveSessionID] = useState<string | null>(null);
+  // When set, the transcript is replaced by a read-only view of this subagent.
+  const [drill, setDrill] = useState<string | null>(null);
 
   // The active turn's items live in a ref (mutated as events stream in); `bump`
   // forces a re-render so the streaming tail stays live below the log.
@@ -96,6 +103,8 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
   const effortRef = useRef<string | undefined>(initialSession?.reasoningEffort);
   // Per-model effort selections persisted across runs (keyed provider/model).
   const tuiStateRef = useRef(loadTuiState());
+  // Agent registry (built-ins + config-file agents), loaded once per workspace.
+  const agentsRef = useRef<AgentInfo[]>([]);
 
   useEffect(() => {
     historyRef.current = history;
@@ -132,6 +141,10 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
           setPermissionQueue((q) => [...q, event.request]);
         } else if (event.type === "permission-replied") {
           setPermissionQueue((q) => q.filter((r) => r.id !== event.requestId));
+        } else if (event.type === "question-asked") {
+          setQuestionQueue((q) => [...q, event.request]);
+        } else if (event.type === "question-answered" || event.type === "question-rejected") {
+          setQuestionQueue((q) => q.filter((r) => r.id !== event.requestId));
         } else if (event.type === "finish") {
           usageRef.current = event.usage;
           setUsage(event.usage);
@@ -176,7 +189,8 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
     const config = await sessionConfig(ref);
     previous?.close();
     const options = {
-      ...sessionOptions,
+      agents: agentsRef.current,
+      ...sessionOptions, // test hook may override (agents, spawnModel, model)
       ...(carriedHistory ? { initialHistory: carriedHistory } : {}),
       ...(id ? { id } : {}),
     };
@@ -262,6 +276,7 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
     }
     void loadProviders().then(async (list) => {
       if (cancelled) return;
+      agentsRef.current = await loadAgents({ workspaceRoot }).catch(() => agentsRef.current);
       const legacyProvider = initialSession && initialModel && !list.all.some((item) => item.id === initialModel.providerID)
         ? {
             id: initialModel.providerID,
@@ -349,7 +364,11 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
       setOverlay(null);
       return;
     }
-    if (key.name === "escape" && busy && permissionQueue.length === 0) sessionRef.current?.abort();
+    // The QuestionPrompt owns esc while a question is pending; SubagentView owns
+    // esc while drilled in. Only abort when neither is active.
+    if (key.name === "escape" && busy && permissionQueue.length === 0 && questionQueue.length === 0 && !drill) {
+      sessionRef.current?.abort();
+    }
   });
 
   const newSession = async () => {
@@ -358,6 +377,7 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
     sessionRef.current?.close();
     sessionRef.current = null;
     setPermissionQueue([]);
+    setQuestionQueue([]);
     setBusy(false);
     setHistory([]);
     turnRef.current = [];
@@ -403,6 +423,7 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
     setUsage(entry.usage);
     usageRef.current = entry.usage;
     setPermissionQueue([]);
+    setQuestionQueue([]);
     turnRef.current = [];
     try {
       await startSession(entry.model, false, entry.id, entry.coreHistory);
@@ -539,10 +560,31 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
     setPermissionQueue((q) => q.slice(1));
   };
 
+  const answerQuestion = (answers: string[][]) => {
+    const front = questionQueue[0];
+    if (!front) return;
+    sessionRef.current?.answerQuestion(front.id, answers);
+    setQuestionQueue((q) => q.slice(1));
+  };
+
+  const declineQuestion = () => {
+    const front = questionQueue[0];
+    if (!front) return;
+    sessionRef.current?.rejectQuestion(front.id);
+    setQuestionQueue((q) => q.slice(1));
+  };
+
   const items = [...history, ...turnRef.current];
   const rows = dimensions.height || 0;
   const approval = permissionQueue[0] ?? null;
-  const showHome = items.length === 0 && !busy && !approval && !overlay;
+  const question = questionQueue[0] ?? null;
+  const drillBlock = drill
+    ? items.find(
+        (it): it is Extract<RenderItem, { kind: "tool" }> =>
+          it.kind === "tool" && it.subagent?.sessionId === drill,
+      )?.subagent ?? null
+    : null;
+  const showHome = items.length === 0 && !busy && !approval && !question && !overlay;
   const currentProvider = providers.all.find((provider) => provider.id === model?.providerID);
   const currentModel = currentProvider?.models.find((candidate) => candidate.id === model?.modelID);
   const modelLabel = model
@@ -579,6 +621,7 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
       setModel(null);
       setBusy(false);
       setPermissionQueue([]);
+    setQuestionQueue([]);
       return setOverlay("provider");
     }
     setOverlay(selected ? null : "provider");
@@ -588,7 +631,9 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
     <box flexDirection="column" height={rows || undefined} backgroundColor={theme.bg}>
       <box flexDirection="row" flexGrow={rows ? 1 : undefined}>
         <box flexGrow={1} flexDirection="column" overflow={rows ? "hidden" : undefined} paddingX={2} paddingBottom={1}>
-          {showHome ? (
+          {drillBlock ? (
+            <SubagentView block={drillBlock} onClose={() => setDrill(null)} />
+          ) : showHome ? (
             <box flexGrow={rows ? 1 : undefined} flexDirection="column" alignItems="center" justifyContent={rows ? "center" : undefined}>
               <Logo />
               <box marginTop={2}>
@@ -597,7 +642,7 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
               <text fg={theme.muted}>Tip: ctrl+p commands · ctrl+o model · tab mode · /help keybindings</text>
             </box>
           ) : (
-            <Viewport items={items} inputEnabled={!overlay} />
+            <Viewport items={items} inputEnabled={!overlay} onOpenSubagent={setDrill} />
           )}
           {overlay === "commands" ? <CommandPalette onSelect={dispatchCommand} /> : null}
           {overlay === "help" ? <Help /> : null}
@@ -638,7 +683,13 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
             />
           ) : null}
           <box flexShrink={0} flexDirection="column" marginTop={1}>
-            {approval ? <ApprovalPrompt request={approval} queueLength={permissionQueue.length} onRespond={respond} /> : overlay ? null : <Prompt busy={busy} inputKey={inputKey} modelLabel={modelLabel} mode={mode} workspaceRoot={workspaceRoot} usage={usage} onSubmit={submit} onToggleMode={toggleMode} />}
+            {approval ? (
+              <ApprovalPrompt request={approval} queueLength={permissionQueue.length} onRespond={respond} />
+            ) : question ? (
+              <QuestionPrompt request={question} onAnswer={answerQuestion} onReject={declineQuestion} />
+            ) : overlay ? null : (
+              <Prompt busy={busy} inputKey={inputKey} modelLabel={modelLabel} mode={mode} workspaceRoot={workspaceRoot} usage={usage} onSubmit={submit} onToggleMode={toggleMode} />
+            )}
             <StatusFooter modelLabel={modelLabel} mode={mode} effort={effort} workspaceRoot={workspaceRoot} busy={busy} approvals={permissionQueue.length} />
           </box>
         </box>

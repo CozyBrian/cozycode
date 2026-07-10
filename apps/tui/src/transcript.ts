@@ -2,6 +2,16 @@ import type { SessionEvent } from "@cozycode/protocol";
 
 export type ToolStatus = "running" | "done" | "error" | "denied";
 
+/** A subagent's live/finished transcript, nested under its parent `task` call. */
+export interface SubagentBlock {
+  sessionId: string;
+  agent: string;
+  description: string;
+  items: RenderItem[];
+  status: "running" | "done" | "error";
+  result?: string;
+}
+
 export type RenderItem =
   | { id: string; kind: "user"; text: string }
   | { id: string; kind: "assistant"; text: string; streaming: boolean }
@@ -14,6 +24,8 @@ export type RenderItem =
       status: ToolStatus;
       result?: unknown;
       metadata?: Record<string, unknown>;
+      /** Nested subagent transcript, present on `task` calls. */
+      subagent?: SubagentBlock;
     }
   | { id: string; kind: "error"; text: string }
   | { id: string; kind: "system"; text: string }
@@ -88,6 +100,41 @@ export function foldTurn(items: RenderItem[], event: SessionEvent): RenderItem[]
       return items.map((it) =>
         it.kind === "tool" && it.toolCallId === event.toolCallId
           ? { ...it, status: statusFor(event.isError, event.result), result: event.result, metadata: event.metadata }
+          : it,
+      );
+    case "subagent-start":
+      return items.map((it) =>
+        it.kind === "tool" && it.toolCallId === event.toolCallId
+          ? {
+              ...it,
+              subagent: {
+                sessionId: event.sessionId,
+                agent: event.agent,
+                description: event.description,
+                items: [],
+                status: "running",
+              },
+            }
+          : it,
+      );
+    case "subagent-event":
+      return items.map((it) =>
+        it.kind === "tool" && it.toolCallId === event.toolCallId && it.subagent
+          ? { ...it, subagent: { ...it.subagent, items: foldTurn(it.subagent.items, event.event) } }
+          : it,
+      );
+    case "subagent-finish":
+      return items.map((it) =>
+        it.kind === "tool" && it.toolCallId === event.toolCallId && it.subagent
+          ? {
+              ...it,
+              subagent: {
+                ...it.subagent,
+                status: event.isError ? "error" : "done",
+                result: event.result,
+                items: finalizeTurn(it.subagent.items),
+              },
+            }
           : it,
       );
     case "error":

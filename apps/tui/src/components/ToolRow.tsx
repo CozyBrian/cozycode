@@ -15,16 +15,117 @@ const GLYPHS: Record<string, string> = {
   read_file: "→",
   write_file: "←",
   edit_file: "←",
+  apply_patch: "±",
   search: "✱",
   grep: "✱",
+  webfetch: "%",
+  websearch: "⌕",
+  todowrite: "☑",
 };
 
-export function ToolRow({ item }: { item: Extract<RenderItem, { kind: "tool" }> }) {
+type ToolItem = Extract<RenderItem, { kind: "tool" }>;
+
+export function ToolRow({
+  item,
+  onOpenSubagent,
+}: {
+  item: ToolItem;
+  onOpenSubagent?: (sessionId: string) => void;
+}) {
+  if (item.toolName === "task" && item.subagent) {
+    return <SubagentCard item={item} onOpen={onOpenSubagent} />;
+  }
+  if (item.toolName === "ask_user") return <QuestionSummary item={item} />;
+  if (item.toolName === "todowrite") return <TodoList item={item} />;
   if (item.toolName === "run_shell") return <Shell item={item} />;
-  if ((item.toolName === "write_file" || item.toolName === "edit_file") && diffPayload(item)) {
+  if (
+    (item.toolName === "write_file" || item.toolName === "edit_file" || item.toolName === "apply_patch") &&
+    diffPayload(item)
+  ) {
     return <FileChange item={item} />;
   }
   return <InlineTool item={item} />;
+}
+
+const TODO_GLYPH: Record<string, string> = {
+  completed: "✔",
+  in_progress: "▸",
+  cancelled: "✗",
+  pending: "○",
+};
+
+/** Render the agent's todo checklist from a todowrite call's metadata. */
+function TodoList({ item }: { item: ToolItem }) {
+  const meta = record(item.metadata);
+  const todos = Array.isArray(meta?.todos)
+    ? (meta.todos as Array<{ content?: string; status?: string }>)
+    : [];
+  if (todos.length === 0) return <InlineTool item={item} />;
+  const done = todos.filter((t) => t.status === "completed").length;
+  return (
+    <BlockTool title={`☑ Todos (${done}/${todos.length})`}>
+      {todos.map((todo, i) => {
+        const status = todo.status ?? "pending";
+        const color =
+          status === "completed" ? theme.muted : status === "in_progress" ? theme.primary : theme.text;
+        return (
+          <text key={i} fg={color} attributes={status === "completed" ? 8 : undefined}>
+            {`${TODO_GLYPH[status] ?? "○"} ${todo.content ?? ""}`}
+          </text>
+        );
+      })}
+    </BlockTool>
+  );
+}
+
+/** A finished `ask_user` call: shows each question and the chosen answer(s). */
+function QuestionSummary({ item }: { item: ToolItem }) {
+  const meta = record(item.metadata);
+  const questions = Array.isArray(meta?.questions) ? (meta!.questions as Array<{ question?: string; header?: string }>) : [];
+  const answers = Array.isArray(meta?.answers) ? (meta!.answers as string[][]) : [];
+  if (questions.length === 0) return <InlineTool item={item} />;
+  return (
+    <BlockTool title="? Asked the user">
+      {questions.map((q, i) => (
+        <box key={i} flexDirection="column">
+          <text fg={theme.text}>{q.question ?? q.header ?? ""}</text>
+          <text fg={theme.primary}>{`→ ${(answers[i] ?? []).join(", ") || "(no answer)"}`}</text>
+        </box>
+      ))}
+    </BlockTool>
+  );
+}
+
+/** A `task` subagent call: a card with a live status line, clickable to drill in. */
+function SubagentCard({ item, onOpen }: { item: ToolItem; onOpen?: (sessionId: string) => void }) {
+  const block = item.subagent!;
+  const color = block.status === "error" ? theme.error : block.status === "done" ? theme.muted : theme.text;
+  return (
+    <BlockTool
+      title={`▸ task › ${block.agent} — ${block.description}`}
+      onMouseUp={onOpen ? () => onOpen(block.sessionId) : undefined}
+    >
+      <text fg={color}>{subagentStatus(block)}</text>
+      {block.status === "running" ? (
+        <text fg={theme.muted}>enter/click to view</text>
+      ) : (
+        <text fg={theme.muted}>click to view transcript</text>
+      )}
+    </BlockTool>
+  );
+}
+
+/** Derive a one-line status from a subagent's folded transcript. */
+function subagentStatus(block: { items: RenderItem[]; status: string; result?: string }): string {
+  if (block.status === "done") {
+    const line = (block.result ?? "").split("\n").find((l) => l.trim()) ?? "";
+    return line ? `✓ ${line.slice(0, 80)}` : "✓ done";
+  }
+  if (block.status === "error") return "✗ failed";
+  const tools = block.items.filter((it) => it.kind === "tool");
+  const running = tools.find((it) => it.kind === "tool" && it.status === "running");
+  const label = running && running.kind === "tool" ? toolLabel(running) : undefined;
+  return label ? `working · ${label}` : `working · ${tools.length} tool ${tools.length === 1 ? "call" : "calls"}`;
 }
 
 function InlineTool({ item }: { item: Extract<RenderItem, { kind: "tool" }> }) {
@@ -78,10 +179,16 @@ function Shell({ item }: { item: Extract<RenderItem, { kind: "tool" }> }) {
 function FileChange({ item }: { item: Extract<RenderItem, { kind: "tool" }> }) {
   const diff = diffPayload(item);
   if (!diff) return <InlineTool item={item} />;
-  const path = stringArg(item.args, "path") ?? "file";
-  const action = item.toolName === "write_file" ? "Wrote" : "Edit";
+  let title: string;
+  if (item.toolName === "apply_patch") {
+    const files = Array.isArray(record(item.result)?.files) ? (record(item.result)!.files as unknown[]).length : 0;
+    title = `± Patched ${files || ""} ${files === 1 ? "file" : "files"}`.trim();
+  } else {
+    const path = stringArg(item.args, "path") ?? "file";
+    title = `← ${item.toolName === "write_file" ? "Wrote" : "Edit"} ${path}`;
+  }
   return (
-    <BlockTool title={`← ${action} ${path}`}>
+    <BlockTool title={title}>
       <Diff patch={diff} />
     </BlockTool>
   );
@@ -124,6 +231,9 @@ function toolLabel(item: Extract<RenderItem, { kind: "tool" }>): string {
       : `Glob "${stringArg(item.args, "glob") ?? "*"}"${scope}${suffix}`;
   }
   if (item.toolName === "run_shell") return `$ ${stringArg(item.args, "command") ?? ""}`;
+  if (item.toolName === "webfetch") return `Fetch ${stringArg(item.args, "url") ?? ""}`;
+  if (item.toolName === "websearch") return `Search "${stringArg(item.args, "query") ?? ""}"`;
+  if (item.toolName === "apply_patch") return "Apply patch";
   return `${item.toolName} ${summary(item.args)}`.trim();
 }
 
@@ -133,6 +243,9 @@ function pendingLabel(item: Extract<RenderItem, { kind: "tool" }>): string {
   if (item.toolName === "write_file") return "Preparing write...";
   if (item.toolName === "edit_file") return "Preparing edit...";
   if (item.toolName === "run_shell") return "Running command...";
+  if (item.toolName === "webfetch") return "Fetching URL...";
+  if (item.toolName === "websearch") return "Searching the web...";
+  if (item.toolName === "apply_patch") return "Applying patch...";
   return `Running ${item.toolName}...`;
 }
 

@@ -109,10 +109,16 @@ export class SessionStore {
     preset: PermissionPreset;
     now: number;
     title?: string;
+    /** Explicit id (subagent child sessions use their core session id). */
+    id?: string;
+    /** Parent session id when this is a subagent child. */
+    parentID?: string | null;
+    /** Subagent type that produced this child session. */
+    agent?: string;
   }): Promise<SessionMeta> {
     const idx = await this.loadIndex();
     const meta: SessionMeta = {
-      id: randomUUID(),
+      id: opts.id ?? randomUUID(),
       title: opts.title ?? "New chat",
       titleEdited: Boolean(opts.title),
       createdAt: opts.now,
@@ -121,6 +127,8 @@ export class SessionStore {
       model: opts.model,
       preset: opts.preset,
       messageCount: 0,
+      parentID: opts.parentID ?? null,
+      agent: opts.agent,
     };
     idx.sessions.push(meta);
     await this.persistIndex();

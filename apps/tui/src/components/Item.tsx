@@ -5,7 +5,13 @@ import { ToolRow } from "./ToolRow.tsx";
 import { theme } from "../theme.ts";
 
 /** Render a single transcript item (user / assistant / reasoning / tool / error / system). */
-export function Item({ item }: { item: RenderItem }) {
+export function Item({
+  item,
+  onOpenSubagent,
+}: {
+  item: RenderItem;
+  onOpenSubagent?: (sessionId: string) => void;
+}) {
   switch (item.kind) {
     case "user":
     case "assistant":
@@ -14,7 +20,7 @@ export function Item({ item }: { item: RenderItem }) {
     case "reasoning":
       return <Reasoning item={item} />;
     case "tool":
-      return <ToolRow item={item} />;
+      return <ToolRow item={item} onOpenSubagent={onOpenSubagent} />;
     case "system":
       return (
         <box marginTop={1} justifyContent="center">
