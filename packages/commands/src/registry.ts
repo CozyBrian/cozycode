@@ -31,6 +31,14 @@ export const COMMAND_DEFS: CommandDef[] = [
     run: (ctx) => ctx.openRenameSession?.(),
   }),
   defineCommand({
+    name: "export",
+    title: "Export session",
+    category: "session",
+    description: "Export the active session as Markdown",
+    args: [{ name: "path", description: "Optional output path" }],
+    run: (ctx, args) => ctx.exportSession?.(args.trim() || undefined),
+  }),
+  defineCommand({
     name: "model",
     title: "Switch model",
     aliases: ["models"],

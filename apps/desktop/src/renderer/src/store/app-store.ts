@@ -99,6 +99,7 @@ export interface AppState {
   activateSession(id: string): Promise<void>;
   deleteSession(id: string): Promise<void>;
   renameSession(id: string, title: string): Promise<void>;
+  exportSession(id: string): Promise<void>;
 
   send(text: string): Promise<void>;
   abort(): void;
@@ -376,6 +377,10 @@ export const useApp = create<AppState>((set, get) => ({
   async renameSession(id, title) {
     await window.cozy.renameSession(id, title);
     await get().refreshSessions();
+  },
+
+  async exportSession(id) {
+    await window.cozy.exportSession(id);
   },
 
   async send(text) {

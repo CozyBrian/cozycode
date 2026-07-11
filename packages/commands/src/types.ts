@@ -18,6 +18,8 @@ export interface CommandContext {
   openSessionPicker?(): void;
   /** Open a title editor for the active session when supported. */
   openRenameSession?(): void;
+  /** Export the active session to Markdown. An optional path selects the destination. */
+  exportSession?(path?: string): void;
   /** Directly switch to a model by id or provider/model reference. */
   setModel?(id: string): void;
   /** Set the reasoning effort ("default"/"" clears). Absent when unsupported. */

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Check, Copy } from "lucide-react";
 import { pickSpinnerVerb } from "@cozycode/commands";
 import { useApp } from "../store/app-store";
 import { ContextToolGroup, ToolCard } from "../components/ToolCard";
@@ -46,11 +46,7 @@ function Row({ item }: { item: TranscriptItem }) {
         </div>
       );
     case "assistant":
-      return (
-        <div>
-          <Markdown text={item.text} />
-        </div>
-      );
+      return <AssistantMessage text={item.text} />;
     case "tool":
       return <ToolCard item={item} />;
     case "reasoning":
@@ -66,6 +62,33 @@ function Row({ item }: { item: TranscriptItem }) {
         <div className="selectable text-center text-xs text-muted-foreground">{item.text}</div>
       );
   }
+}
+
+function AssistantMessage({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <div>
+      <Markdown text={text} />
+      <div className="mt-1 flex justify-start">
+        <button
+          type="button"
+          onClick={() => void copy()}
+          className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
+          aria-label="Copy message as Markdown"
+          title="Copy message as Markdown"
+        >
+          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export function Transcript() {

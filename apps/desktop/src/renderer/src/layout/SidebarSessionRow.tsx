@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { MessageSquare, Pencil, Trash2 } from "lucide-react";
+import { Download, MessageSquare, Pencil, Trash2 } from "lucide-react";
 import type { SessionMeta } from "../../../shared/ipc.ts";
 import { useApp } from "../store/app-store";
 import { relativeTime } from "../lib/relative-time";
@@ -11,6 +11,7 @@ export function SidebarSessionRow({ session, now }: { session: SessionMeta; now:
   const activate = useApp((s) => s.activateSession);
   const rename = useApp((s) => s.renameSession);
   const remove = useApp((s) => s.deleteSession);
+  const exportSession = useApp((s) => s.exportSession);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(session.title);
 
@@ -68,6 +69,9 @@ export function SidebarSessionRow({ session, now }: { session: SessionMeta; now:
           }}
         >
           <Pencil className="size-4" /> Rename
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => void exportSession(session.id)}>
+          <Download className="size-4" /> Export Markdown
         </ContextMenuItem>
         <ContextMenuItem variant="destructive" onSelect={() => void remove(session.id)}>
           <Trash2 className="size-4" /> Delete

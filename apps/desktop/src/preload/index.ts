@@ -37,6 +37,7 @@ const api: CozyApi = {
   deleteSession: (id: string) => ipcRenderer.invoke(IPC.sessionsDelete, id),
   renameSession: (id: string, title: string) =>
     ipcRenderer.invoke(IPC.sessionsRename, { id, title }),
+  exportSession: (id: string) => ipcRenderer.invoke(IPC.sessionsExport, id),
 
   providers: {
     list: () => ipcRenderer.invoke(IPC.providersList),

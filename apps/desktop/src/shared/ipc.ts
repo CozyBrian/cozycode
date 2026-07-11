@@ -106,6 +106,7 @@ export const IPC = {
   sessionsActivate: "sessions:activate",
   sessionsDelete: "sessions:delete",
   sessionsRename: "sessions:rename",
+  sessionsExport: "sessions:export",
   // providers
   providersList: "providers:list",
   providersConnectApi: "providers:connect-api",
@@ -151,6 +152,8 @@ export interface CozyApi {
   /** Returns the new active snapshot if the active session was deleted, else null. */
   deleteSession(id: string): Promise<SessionSnapshot | null>;
   renameSession(id: string, title: string): Promise<void>;
+  /** Opens a Save As dialog and exports the selected session as Markdown. */
+  exportSession(id: string): Promise<string | null>;
 
   providers: {
     list(): Promise<ProviderList>;

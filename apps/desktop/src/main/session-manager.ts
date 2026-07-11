@@ -1,5 +1,6 @@
 import type { WebContents } from "electron";
 import { homedir } from "node:os";
+import { formatTranscriptMarkdown, type MarkdownTranscriptItem } from "@cozycode/commands";
 import {
   createSession,
   createModel,
@@ -16,7 +17,7 @@ import type {
   SessionConfig,
   SessionEvent,
 } from "@cozycode/protocol";
-import { IPC, type PermissionPreset, type SessionMeta, type SessionSnapshot } from "../shared/ipc.ts";
+import { IPC, type PermissionPreset, type SessionMeta, type SessionRecord, type SessionSnapshot } from "../shared/ipc.ts";
 import type { SettingsStore } from "./settings.ts";
 import type { ProviderBridge } from "./providers.ts";
 import { SessionStore } from "./session-store.ts";
@@ -189,6 +190,12 @@ export class SessionManager {
     this.notifyChanged();
   }
 
+  async exportMarkdown(id: string): Promise<{ title: string; markdown: string }> {
+    const meta = await this.store.get(id);
+    if (!meta) throw new Error(`Unknown session: ${id}`);
+    return { title: meta.title, markdown: formatTranscriptMarkdown(meta.title, markdownItems(await this.store.readRecords(id))) };
+  }
+
   /** Flush history and close the live session (which cascade-rejects parked asks). */
   private async teardownActive(): Promise<void> {
     if (this.session && this.activeMeta) {
@@ -312,4 +319,33 @@ export class SessionManager {
     await this.teardownActive();
     await this.store.dispose();
   }
+}
+
+function markdownItems(records: SessionRecord[]): MarkdownTranscriptItem[] {
+  const items: MarkdownTranscriptItem[] = [];
+  for (const record of records) {
+    if (record.kind === "user") {
+      items.push({ kind: "user", text: record.text });
+      continue;
+    }
+    const event = record.event;
+    if (event.type === "text-delta") {
+      const last = items.at(-1);
+      if (last?.kind === "assistant") last.text = `${last.text ?? ""}${event.text}`;
+      else items.push({ kind: "assistant", text: event.text });
+    } else if (event.type === "reasoning-delta") {
+      const last = items.at(-1);
+      if (last?.kind === "reasoning") last.text = `${last.text ?? ""}${event.text}`;
+    } else if (event.type === "reasoning-start") {
+      items.push({ kind: "reasoning", text: "" });
+    } else if (event.type === "tool-call-start") {
+      items.push({ kind: "tool", toolName: event.toolName, args: event.args, status: "running" });
+    } else if (event.type === "tool-result") {
+      const tool = [...items].reverse().find((item) => item.kind === "tool" && item.status === "running");
+      if (tool) Object.assign(tool, { result: event.result, status: event.isError ? "error" : "done" });
+    } else if (event.type === "error") {
+      items.push({ kind: "error", text: event.message });
+    }
+  }
+  return items;
 }

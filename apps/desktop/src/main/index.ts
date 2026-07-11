@@ -1,6 +1,8 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { auth, registry } from "@cozycode/core";
+import { sessionMarkdownFilename } from "@cozycode/commands";
 import type { AgentMode, CustomProviderInput, ModelRef, PermissionReplyBody, QuestionReplyBody } from "@cozycode/protocol";
 import { IPC, type AppSettingsInput, type PermissionPreset } from "../shared/ipc.ts";
 import { SettingsStore } from "./settings.ts";
@@ -95,6 +97,17 @@ function registerIpc(): void {
   ipcMain.handle(IPC.sessionsRename, (_e, payload: { id: string; title: string }) =>
     manager?.rename(payload.id, payload.title),
   );
+  ipcMain.handle(IPC.sessionsExport, async (_e, id: string) => {
+    if (!manager) return null;
+    const { title, markdown } = await manager.exportMarkdown(id);
+    const result = await dialog.showSaveDialog({
+      defaultPath: sessionMarkdownFilename(title),
+      filters: [{ name: "Markdown", extensions: ["md"] }],
+    });
+    if (result.canceled || !result.filePath) return null;
+    await writeFile(result.filePath, markdown, "utf8");
+    return result.filePath;
+  });
 
   // providers
   ipcMain.handle(IPC.providersList, () => providers.list());

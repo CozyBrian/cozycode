@@ -1,3 +1,5 @@
+import { isValidElement, useState, type ReactNode } from "react";
+import { Check, Copy } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
@@ -39,11 +41,7 @@ const components: Components = {
   li: ({ children }) => <li className="pl-1 marker:text-muted-foreground">{children}</li>,
   ol: ({ children }) => <ol className="my-3 list-decimal space-y-1 pl-6">{children}</ol>,
   p: ({ children }) => <p className="my-3 first:mt-0 last:mb-0">{children}</p>,
-  pre: ({ children }) => (
-    <pre className="my-3 overflow-x-auto rounded-xl border border-border bg-black/35 p-4 text-[13px] leading-relaxed shadow-inner shadow-black/20">
-      {children}
-    </pre>
-  ),
+  pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
   table: ({ children }) => (
     <div className="my-3 overflow-x-auto rounded-xl border border-border">
       <table className="w-full border-collapse text-sm">{children}</table>
@@ -55,6 +53,41 @@ const components: Components = {
   ),
   ul: ({ children }) => <ul className="my-3 list-disc space-y-1 pl-6">{children}</ul>,
 };
+
+function CodeBlock({ children }: { children: ReactNode }) {
+  const [copied, setCopied] = useState(false);
+  const text = textContent(children);
+
+  const copy = async () => {
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <div className="group relative my-3">
+      <pre className="overflow-x-auto rounded-xl border border-border bg-black/35 p-4 text-[13px] leading-relaxed shadow-inner shadow-black/20">
+        {children}
+      </pre>
+      <button
+        type="button"
+        onClick={() => void copy()}
+        className="absolute right-2 top-2 flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-white/10 hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+        aria-label="Copy code"
+        title="Copy code"
+      >
+        {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+      </button>
+    </div>
+  );
+}
+
+function textContent(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(textContent).join("");
+  if (isValidElement<{ children?: ReactNode }>(node)) return textContent(node.props.children);
+  return "";
+}
 
 export function Markdown({ text }: { text: string }) {
   return (

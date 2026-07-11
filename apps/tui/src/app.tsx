@@ -1,4 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from "react";
+import { writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { createModel, createSession, defaultSessionTitle, loadAgents, registry, type Session, type SessionOptions } from "@cozycode/core";
 import {
@@ -10,6 +12,8 @@ import {
   resolveEffort,
   resolveModelRef,
   runCommandInput,
+  formatTranscriptMarkdown,
+  sessionMarkdownFilename,
   type CommandContext,
 } from "@cozycode/commands";
 import type {
@@ -518,6 +522,18 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
     setOverlay(null);
   };
 
+  const exportSession = async (path?: string) => {
+    const id = activeSessionIDRef.current ?? sessionRef.current?.id;
+    const title = (id ? sessionTitlesRef.current.get(id) : undefined) ?? defaultSessionTitle();
+    const destination = path ? resolve(workspaceRoot, path) : join(workspaceRoot, sessionMarkdownFilename(title));
+    try {
+      await writeFile(destination, formatTranscriptMarkdown(title, [...historyRef.current, ...turnRef.current]), "utf8");
+      commandCtx.notify("info", `Exported session to ${destination}`);
+    } catch (error) {
+      commandCtx.notify("error", error instanceof Error ? error.message : String(error));
+    }
+  };
+
   const toggleMode = () => {
     const next: AgentMode = modeRef.current === "plan" ? "build" : "plan";
     modeRef.current = next;
@@ -539,6 +555,7 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
     openRenameSession: () => {
       if (!busy && sessionRef.current) setOverlay("rename");
     },
+    exportSession: (path) => void exportSession(path),
     openModelPicker: () => setOverlay("model"),
     openProviderPicker: () => setOverlay("provider"),
     setEffort: (level) => {
