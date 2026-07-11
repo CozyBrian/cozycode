@@ -15,6 +15,8 @@ const KEYS: [string, string][] = [
   ["⌘B", "toggle sidebar"],
   ["⌘J", "toggle terminal"],
   ["⌘⇧T", "cycle reasoning effort"],
+  ["⌘[", "back"],
+  ["⌘]", "forward"],
   ["⌘N", "new chat"],
   ["⌘,", "open settings"],
 ];

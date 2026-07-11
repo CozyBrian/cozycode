@@ -5,7 +5,7 @@ import { useApp } from "../store/app-store";
 /**
  * Global keyboard shortcuts. ⌘P / ⌘T are reserved for the Files / Browser rail
  * stubs, so the sidebar uses ⌘B and the terminal drawer ⌘J (VS Code convention).
- * ⌘⇧T cycles reasoning effort (⌘T alone stays reserved).
+ * ⌘⇧T cycles reasoning effort (⌘T alone stays reserved); ⌘[/⌘] navigate history.
  */
 export function useGlobalShortcuts(): void {
   useEffect(() => {
@@ -43,6 +43,14 @@ export function useGlobalShortcuts(): void {
         case ",":
           e.preventDefault();
           s.openSettings();
+          break;
+        case "[":
+          e.preventDefault();
+          s.navigateBack();
+          break;
+        case "]":
+          e.preventDefault();
+          s.navigateForward();
           break;
       }
     };

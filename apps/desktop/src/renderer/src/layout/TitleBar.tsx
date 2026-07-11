@@ -41,21 +41,27 @@ export function TitleControls() {
   const toggleSidebar = useApp((s) => s.toggleSidebar);
   const subagentHistoryIndex = useApp((s) => s.subagentHistoryIndex);
   const subagentHistory = useApp((s) => s.subagentHistory);
-  const navigateSubagentBack = useApp((s) => s.navigateSubagentBack);
-  const navigateSubagentForward = useApp((s) => s.navigateSubagentForward);
+  const sessionHistoryIndex = useApp((s) => s.sessionHistoryIndex);
+  const sessionHistory = useApp((s) => s.sessionHistory);
+  const navigateBack = useApp((s) => s.navigateBack);
+  const navigateForward = useApp((s) => s.navigateForward);
 
   return (
     <div className="flex items-center gap-1 pl-22">
       <IconButton label="Toggle sidebar  ⌘B" onClick={toggleSidebar} active={sidebarOpen}>
         <PanelLeft className="size-4" />
       </IconButton>
-      <IconButton label="Back" onClick={navigateSubagentBack} disabled={subagentHistoryIndex === 0}>
+      <IconButton
+        label="Back  ⌘["
+        onClick={navigateBack}
+        disabled={subagentHistoryIndex === 0 && sessionHistoryIndex <= 0}
+      >
         <ChevronLeft className="size-4" />
       </IconButton>
       <IconButton
-        label="Forward"
-        onClick={navigateSubagentForward}
-        disabled={subagentHistoryIndex === subagentHistory.length - 1}
+        label="Forward  ⌘]"
+        onClick={navigateForward}
+        disabled={subagentHistoryIndex === subagentHistory.length - 1 && sessionHistoryIndex === sessionHistory.length - 1}
       >
         <ChevronRight className="size-4" />
       </IconButton>

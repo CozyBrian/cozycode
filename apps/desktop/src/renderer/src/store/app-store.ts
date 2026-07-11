@@ -68,6 +68,9 @@ export interface AppState {
   /** Drill-in routes for the active session; `null` represents its parent transcript. */
   subagentHistory: Array<string | null>;
   subagentHistoryIndex: number;
+  /** Activated top-level sessions, used by the title-bar back and forward controls. */
+  sessionHistory: string[];
+  sessionHistoryIndex: number;
 
   // active chat
   items: TranscriptItem[];
@@ -130,10 +133,12 @@ export interface AppState {
   exitSubagent(): void;
   navigateSubagentBack(): void;
   navigateSubagentForward(): void;
+  navigateBack(): void;
+  navigateForward(): void;
 
   refreshSessions(): Promise<void>;
   createSession(workspaceRoot?: string | null): Promise<void>;
-  activateSession(id: string): Promise<void>;
+  activateSession(id: string, recordHistory?: boolean, historyIndex?: number): Promise<void>;
   deleteSession(id: string): Promise<void>;
   renameSession(id: string, title: string): Promise<void>;
   exportSession(id: string): Promise<void>;
@@ -242,6 +247,8 @@ export const useApp = create<AppState>((set, get) => ({
   subagentView: null,
   subagentHistory: [null],
   subagentHistoryIndex: 0,
+  sessionHistory: [],
+  sessionHistoryIndex: -1,
 
   items: [],
   busy: false,
@@ -289,6 +296,8 @@ export const useApp = create<AppState>((set, get) => ({
         model: snap.meta.model,
         effort: storedEffort(get(), snap.meta.model),
         busy: false,
+        sessionHistory: [snap.meta.id],
+        sessionHistoryIndex: 0,
       });
       void get().refreshSessions();
     }
@@ -413,6 +422,30 @@ export const useApp = create<AppState>((set, get) => ({
       const subagentHistoryIndex = s.subagentHistoryIndex + 1;
       return { subagentHistoryIndex, subagentView: s.subagentHistory[subagentHistoryIndex] ?? null };
     }),
+  navigateBack: () => {
+    const { subagentHistoryIndex, sessionHistoryIndex } = get();
+    if (subagentHistoryIndex > 0) {
+      get().navigateSubagentBack();
+      return;
+    }
+    if (sessionHistoryIndex > 0) {
+      const nextIndex = sessionHistoryIndex - 1;
+      const id = get().sessionHistory[nextIndex];
+      if (id) void get().activateSession(id, false, nextIndex);
+    }
+  },
+  navigateForward: () => {
+    const { subagentHistory, subagentHistoryIndex, sessionHistory, sessionHistoryIndex } = get();
+    if (subagentHistoryIndex < subagentHistory.length - 1) {
+      get().navigateSubagentForward();
+      return;
+    }
+    if (sessionHistoryIndex < sessionHistory.length - 1) {
+      const nextIndex = sessionHistoryIndex + 1;
+      const id = sessionHistory[nextIndex];
+      if (id) void get().activateSession(id, false, nextIndex);
+    }
+  },
 
   async refreshSessions() {
     set({ sessions: await window.cozy.listSessions() });
@@ -441,14 +474,21 @@ export const useApp = create<AppState>((set, get) => ({
       subagentView: null,
       subagentHistory: [null],
       subagentHistoryIndex: 0,
+      sessionHistory: [...get().sessionHistory.slice(0, get().sessionHistoryIndex + 1), snap.meta.id],
+      sessionHistoryIndex: get().sessionHistoryIndex + 1,
     });
     await updateLastWorkspace(get, set, snap.meta.workspaceRoot);
     await get().refreshSessions();
   },
 
-  async activateSession(id) {
+  async activateSession(id, recordHistory = true, historyIndex) {
     if (id === get().activeId) return;
     const snap = await window.cozy.activateSession(id);
+    const { sessionHistory, sessionHistoryIndex } = get();
+    const nextHistory = recordHistory
+      ? [...sessionHistory.slice(0, sessionHistoryIndex + 1), snap.meta.id]
+      : sessionHistory;
+    const nextHistoryIndex = recordHistory ? nextHistory.length - 1 : (historyIndex ?? sessionHistory.indexOf(snap.meta.id));
     set({
       activeId: snap.meta.id,
       items: replayRecords(snap.records),
@@ -463,13 +503,17 @@ export const useApp = create<AppState>((set, get) => ({
       subagentView: null,
       subagentHistory: [null],
       subagentHistoryIndex: 0,
+      sessionHistory: nextHistory,
+      sessionHistoryIndex: nextHistoryIndex,
     });
     await updateLastWorkspace(get, set, snap.meta.workspaceRoot);
   },
 
   async deleteSession(id) {
     const snap = await window.cozy.deleteSession(id);
+    const sessionHistory = get().sessionHistory.filter((sessionId) => sessionId !== id);
     if (snap) {
+      if (!sessionHistory.includes(snap.meta.id)) sessionHistory.push(snap.meta.id);
       set({
         activeId: snap.meta.id,
         items: replayRecords(snap.records),
@@ -483,7 +527,11 @@ export const useApp = create<AppState>((set, get) => ({
         subagentView: null,
         subagentHistory: [null],
         subagentHistoryIndex: 0,
+        sessionHistory,
+        sessionHistoryIndex: sessionHistory.lastIndexOf(snap.meta.id),
       });
+    } else {
+      set((s) => ({ sessionHistory, sessionHistoryIndex: sessionHistory.lastIndexOf(s.activeId ?? "") }));
     }
     await get().refreshSessions();
   },
