@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, PanelLeft } from "lucide-react";
+import { ChevronLeft, ChevronRight, PanelBottom, PanelLeft, PanelRight } from "lucide-react";
 import { useApp } from "../store/app-store";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -58,6 +58,24 @@ export function TitleControls() {
         disabled={subagentHistoryIndex === subagentHistory.length - 1}
       >
         <ChevronRight className="size-4" />
+      </IconButton>
+    </div>
+  );
+}
+
+export function ViewControls() {
+  const terminalOpen = useApp((s) => s.terminalOpen);
+  const contentPanelOpen = useApp((s) => s.contentPanelOpen);
+  const toggleTerminal = useApp((s) => s.toggleTerminal);
+  const toggleContentPanel = useApp((s) => s.toggleContentPanel);
+
+  return (
+    <div className="flex items-center gap-1 pr-3">
+      <IconButton label="Toggle terminal  ⌘J" onClick={toggleTerminal} active={terminalOpen}>
+        <PanelBottom className="size-4" />
+      </IconButton>
+      <IconButton label="Toggle panel  ⌘\\" onClick={toggleContentPanel} active={contentPanelOpen}>
+        <PanelRight className="size-4" />
       </IconButton>
     </div>
   );

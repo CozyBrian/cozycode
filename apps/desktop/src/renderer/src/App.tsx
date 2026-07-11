@@ -9,7 +9,7 @@ import { PermissionModal } from "./components/PermissionModal";
 import { QuestionModal } from "./components/QuestionModal";
 import { Help } from "./components/Help";
 import { TextShimmer } from "./components/TextShimmer";
-import { TitleControls } from "./layout/TitleBar";
+import { TitleControls, ViewControls } from "./layout/TitleBar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -70,6 +70,12 @@ export function App() {
       {createPortal(
         <div className="fixed top-0 left-0 z-50 app-no-drag flex h-12 items-center">
           <TitleControls />
+        </div>,
+        document.body,
+      )}
+      {createPortal(
+        <div className="fixed top-0 right-0 z-50 app-no-drag flex h-12 items-center">
+          <ViewControls />
         </div>,
         document.body,
       )}

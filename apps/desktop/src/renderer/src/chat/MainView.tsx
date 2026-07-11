@@ -1,40 +1,8 @@
-import { PanelBottom, PanelRight } from "lucide-react";
 import { useApp } from "../store/app-store";
 import { Transcript } from "./Transcript";
 import { Composer } from "./Composer";
 import { ContextChip } from "./ContextChip";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-
-function HeaderButton({
-  label,
-  onClick,
-  active,
-  children,
-}: {
-  label: string;
-  onClick: () => void;
-  active?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          onClick={onClick}
-          className={cn(
-            "app-no-drag flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-white/8 hover:text-foreground",
-            active && "bg-white/10 text-foreground",
-          )}
-        >
-          {children}
-        </button>
-      </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
-  );
-}
 
 function projectLabel(root: string | null | undefined): string {
   if (!root) return "this chat";
@@ -44,15 +12,11 @@ function projectLabel(root: string | null | undefined): string {
 
 function ChatHeader({ title, active }: { title: string; active: boolean }) {
   const sidebarOpen = useApp((s) => s.sidebarOpen);
-  const terminalOpen = useApp((s) => s.terminalOpen);
-  const contentPanelOpen = useApp((s) => s.contentPanelOpen);
-  const toggleTerminal = useApp((s) => s.toggleTerminal);
-  const toggleContentPanel = useApp((s) => s.toggleContentPanel);
 
   return (
     <header
       className={cn(
-        "app-drag relative z-40 flex h-12 shrink-0 items-center justify-between px-3",
+        "app-drag relative z-40 flex h-12 shrink-0 items-center px-3",
         active && "border-b border-border/60",
       )}
     >
@@ -60,14 +24,6 @@ function ChatHeader({ title, active }: { title: string; active: boolean }) {
         <div className="min-w-0 flex-1 truncate px-2 text-sm font-medium text-foreground/85">
           {title}
         </div>
-      </div>
-      <div className="flex items-center gap-1">
-        <HeaderButton label="Toggle terminal  ⌘J" onClick={toggleTerminal} active={terminalOpen}>
-          <PanelBottom className="size-4" />
-        </HeaderButton>
-        <HeaderButton label="Toggle panel  ⌘\\" onClick={toggleContentPanel} active={contentPanelOpen}>
-          <PanelRight className="size-4" />
-        </HeaderButton>
       </div>
     </header>
   );

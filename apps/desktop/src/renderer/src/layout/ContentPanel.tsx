@@ -13,7 +13,17 @@ const TABS: { id: ContentPanelTab; label: string; icon: React.ReactNode }[] = [
   { id: "git", label: "Git", icon: <GitBranch className="size-4" /> },
 ];
 
-function TabButton({ id, label, icon }: { id: ContentPanelTab; label: string; icon: React.ReactNode }) {
+function TabButton({
+  id,
+  label,
+  icon,
+  disabled,
+}: {
+  id: ContentPanelTab;
+  label: string;
+  icon: React.ReactNode;
+  disabled: boolean;
+}) {
   const active = useApp((s) => s.contentPanelTab === id);
   const setTab = useApp((s) => s.setContentPanelTab);
   return (
@@ -22,8 +32,9 @@ function TabButton({ id, label, icon }: { id: ContentPanelTab; label: string; ic
         <button
           type="button"
           onClick={() => setTab(id)}
+          disabled={disabled}
           className={cn(
-            "app-no-drag flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-white/8 hover:text-foreground",
+            "app-no-drag flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-white/8 hover:text-foreground disabled:pointer-events-none",
             active && "bg-white/10 text-foreground",
           )}
         >
@@ -79,10 +90,18 @@ export function ContentPanel() {
       style={{ maxWidth: open ? `${width}px` : "0px" }}
     >
       <div className="flex h-full flex-col" style={{ width }}>
-        <header className="app-drag flex h-12 shrink-0 items-center gap-1 border-b border-border/60 px-3">
-          {TABS.map((t) => (
-            <TabButton key={t.id} {...t} />
-          ))}
+        <header className="app-drag flex h-12 shrink-0 items-center border-b border-border/60 px-3">
+          <div
+            aria-hidden={!open}
+            className={cn(
+              "flex gap-1 transition-opacity duration-[160ms] ease-[cubic-bezier(0.23,1,0.32,1)]",
+              open ? "opacity-100" : "opacity-0",
+            )}
+          >
+            {TABS.map((t) => (
+              <TabButton key={t.id} {...t} disabled={!open} />
+            ))}
+          </div>
         </header>
         <div className="content-panel-scroll min-h-0 flex-1 overflow-auto">
           <PaneBody />
