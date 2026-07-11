@@ -11,7 +11,6 @@ import {
   IPC,
   type AppSettingsInput,
   type CozyApi,
-  type GitCommitDraft,
   type GitStatus,
   type PermissionPreset,
   type SessionMeta,
@@ -84,10 +83,6 @@ const api: CozyApi = {
   git: {
     status: () => ipcRenderer.invoke(IPC.gitStatus),
     diff: (path: string, staged: boolean) => ipcRenderer.invoke(IPC.gitDiff, { path, staged }),
-    generateCommitDraft: () => ipcRenderer.invoke(IPC.gitCommitDraft),
-    commit: (draft: GitCommitDraft) => ipcRenderer.invoke(IPC.gitCommit, draft),
-    pullRequestBases: () => ipcRenderer.invoke(IPC.gitPullRequestBases),
-    generatePullRequestDraft: (base: string) => ipcRenderer.invoke(IPC.gitPullRequestDraft, base),
     onChanged(cb: (status: GitStatus) => void) {
       const listener = (_e: IpcRendererEvent, status: GitStatus) => cb(status);
       ipcRenderer.on(IPC.gitChanged, listener);

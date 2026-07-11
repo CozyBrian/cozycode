@@ -38,8 +38,6 @@ export class SettingsStore {
       recentModels: stored.recentModels,
       reasoningEfforts: stored.reasoningEfforts,
       showContextSize: stored.showContextSize,
-      gitCommitModel: stored.gitCommitModel,
-      gitPullRequestModel: stored.gitPullRequestModel,
     };
     this.cache = settings;
     // Existing installations had one workspace root. Preserve it as their first
@@ -58,8 +56,6 @@ export class SettingsStore {
       recentModels: input.recentModels?.slice(0, 8),
       reasoningEfforts: input.reasoningEfforts,
       showContextSize: input.showContextSize,
-      gitCommitModel: input.gitCommitModel,
-      gitPullRequestModel: input.gitPullRequestModel,
     };
     await mkdir(app.getPath("userData"), { recursive: true });
     await writeFile(this.file, JSON.stringify(next, null, 2), "utf8");

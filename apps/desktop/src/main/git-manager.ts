@@ -10,23 +10,6 @@ const EMPTY: GitStatus = { isRepo: false, branch: null, ahead: 0, behind: 0, fil
 
 /** Debounce window for coalescing watcher bursts (a single save fires many events). */
 const REFRESH_DEBOUNCE_MS = 300;
-const MAX_PROMPT_DIFF_CHARS = 120_000;
-
-export interface CommitContext {
-  status: string;
-  stat: string;
-  diff: string;
-  index: string;
-}
-
-export interface PullRequestContext {
-  base: string;
-  status: string;
-  log: string;
-  stat: string;
-  diff: string;
-}
-
 /**
  * Owns a read-only view of the active session's git working tree for one
  * window. Mirrors `TerminalManager`: `setCwd` follows the active session, a
@@ -51,12 +34,8 @@ export class GitManager {
 
   private async git(args: string[]): Promise<string> {
     if (!this.cwd) throw new Error("No workspace root.");
-    try {
-      const { stdout } = await run("git", args, { cwd: this.cwd, maxBuffer: 16 * 1024 * 1024 });
-      return stdout;
-    } catch (cause) {
-      throw friendlyGitError(cause);
-    }
+    const { stdout } = await run("git", args, { cwd: this.cwd, maxBuffer: 16 * 1024 * 1024 });
+    return stdout;
   }
 
   async status(): Promise<GitStatus> {
@@ -103,69 +82,6 @@ export class GitManager {
     } catch {
       return "";
     }
-  }
-
-  async commitContext(): Promise<CommitContext> {
-    this.requireRepo();
-    const [status, stat, diff, index] = await Promise.all([
-      this.git(["status"]),
-      this.git(["diff", "--cached", "--stat"]),
-      this.git(["diff", "--cached"]),
-      this.git(["write-tree"]),
-    ]);
-    if (!diff.trim()) throw new Error("Stage changes before generating a commit message.");
-    return { status, stat, diff: limitDiff(diff), index: index.trim() };
-  }
-
-  /** Stage the full working tree before collecting an AI commit-message draft. */
-  async stageAll(): Promise<void> {
-    this.requireRepo();
-    await this.git(["add", "-A"]);
-    await this.pushStatus();
-  }
-
-  async commit(subject: string, body: string, index: string): Promise<void> {
-    this.requireRepo();
-    if (!subject.trim()) throw new Error("A commit subject is required.");
-    const current = (await this.git(["write-tree"])).trim();
-    if (current !== index) throw new Error("Staged changes changed after this draft was generated. Generate a new draft before committing.");
-    const args = ["commit", "-m", subject.trim()];
-    if (body.trim()) args.push("-m", body.trim());
-    await this.git(args);
-    await this.pushStatus();
-  }
-
-  async pullRequestBases(): Promise<string[]> {
-    this.requireRepo();
-    const candidates = ["origin/HEAD", "origin/main", "origin/master", "main", "master", "dev"];
-    const available = await Promise.all(candidates.map(async (ref) => {
-      try {
-        const resolved = ref === "origin/HEAD"
-          ? (await this.git(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"])).trim()
-          : ref;
-        await this.git(["rev-parse", "--verify", "--quiet", resolved]);
-        return resolved;
-      } catch { return undefined; }
-    }));
-    return [...new Set(available.filter((ref): ref is string => Boolean(ref)))];
-  }
-
-  async pullRequestContext(base: string): Promise<PullRequestContext> {
-    this.requireRepo();
-    await this.git(["rev-parse", "--verify", "--quiet", base]);
-    const mergeBase = (await this.git(["merge-base", base, "HEAD"])).trim();
-    const range = `${mergeBase}..HEAD`;
-    const [status, log, stat, diff] = await Promise.all([
-      this.git(["status"]),
-      this.git(["log", "--oneline", range]),
-      this.git(["diff", range, "--stat"]),
-      this.git(["diff", range]),
-    ]);
-    return { base, status, log, stat, diff: limitDiff(diff) };
-  }
-
-  private requireRepo(): void {
-    if (!this.cwd) throw new Error("No workspace is active.");
   }
 
   /** Full-file diff for an untracked path (all-add), via a no-index comparison. */
@@ -218,21 +134,6 @@ export class GitManager {
     this.watcher?.close();
     this.watcher = null;
   }
-}
-
-function limitDiff(diff: string): string {
-  if (diff.length <= MAX_PROMPT_DIFF_CHARS) return diff;
-  return `${diff.slice(0, MAX_PROMPT_DIFF_CHARS)}\n\n[Diff truncated to fit the generation context.]`;
-}
-
-function friendlyGitError(cause: unknown): Error {
-  const detail = cause as { stderr?: unknown; message?: unknown };
-  const text = [detail.stderr, detail.message].filter((value): value is string => typeof value === "string").join("\n");
-  if (text.includes("index.lock")) {
-    return new Error("Git is busy or has a stale index lock. Finish the other Git operation, then remove .git/index.lock only if no Git process is running.");
-  }
-  const firstLine = text.split("\n").map((line) => line.trim()).find(Boolean);
-  return new Error(firstLine || "Git command failed.");
 }
 
 /**

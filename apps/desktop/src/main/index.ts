@@ -155,15 +155,11 @@ function registerIpc(): void {
   );
   ipcMain.handle(IPC.termKill, (_e, termId: string) => manager?.terminals.kill(termId));
 
-  // git
+  // git (read-only)
   ipcMain.handle(IPC.gitStatus, () => manager?.git.status());
   ipcMain.handle(IPC.gitDiff, (_e, payload: { path: string; staged: boolean }) =>
     manager?.git.diff(payload.path, payload.staged),
   );
-  ipcMain.handle(IPC.gitCommitDraft, () => manager?.generateCommitDraft());
-  ipcMain.handle(IPC.gitCommit, (_e, draft) => manager?.commitGitDraft(draft));
-  ipcMain.handle(IPC.gitPullRequestBases, () => manager?.pullRequestBases() ?? []);
-  ipcMain.handle(IPC.gitPullRequestDraft, (_e, base: string) => manager?.generatePullRequestDraft(base));
 }
 
 app.whenReady().then(async () => {
