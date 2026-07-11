@@ -2,6 +2,7 @@ import type { WebContents } from "electron";
 import { homedir } from "node:os";
 import {
   createSession,
+  createModel,
   loadAgents,
   mergeRulesets,
   rulesetFromConfig,
@@ -85,10 +86,27 @@ export class SessionManager {
     this.session?.close();
     this.configKey = key;
     const agents = await loadAgents({ workspaceRoot: config.workspaceRoot }).catch(() => []);
+    const providers = await this.providers.list();
+    const titleModels = (await Promise.all(
+      providers.all
+        .flatMap((provider) => providers.connected.includes(provider.id)
+          ? provider.models
+            .filter((model) => model.id.toLowerCase() === "deepseek-v4-flash")
+            .map((model) => ({ providerID: provider.id, modelID: model.id }))
+          : [])
+        .map(async ({ providerID, modelID }) => {
+          try {
+            return createModel(await this.providers.providerConfig(providerID), modelID);
+          } catch {
+            return undefined;
+          }
+        }),
+    )).flatMap((model) => model ? [model] : []);
     this.session = createSession(config, {
       id: meta.id,
       initialHistory,
       agents,
+      titleModels,
     });
     this.pump(this.session, meta.id);
     return this.session;
@@ -228,6 +246,7 @@ export class SessionManager {
       // Permission/question asks are live-only control events; persisting them
       // would resurrect stale modals on replay.
       const liveOnly =
+        event.type === "title-change" ||
         event.type === "permission-asked" ||
         event.type === "permission-replied" ||
         event.type === "question-asked" ||
@@ -239,6 +258,13 @@ export class SessionManager {
         } catch {
           // A persistence hiccup must never break event forwarding to the UI.
         }
+      }
+      if (event.type === "title-change") {
+        if (await this.store.applyGeneratedTitle(sessionId, event.title)) {
+          if (this.activeMeta?.id === sessionId) this.activeMeta.title = event.title;
+          this.notifyChanged();
+        }
+        continue;
       }
       if (this.web.isDestroyed()) return;
       this.web.send(IPC.sessionEvent, event);
@@ -259,9 +285,7 @@ export class SessionManager {
       if (!this.activeMeta) await this.init();
       const meta = this.activeMeta!;
       const session = await this.ensureSession();
-      // Persist the user turn + metadata before running the agent. Auto-title
-      // updates the index in place; touch then re-persists with the new counts.
-      await this.store.maybeAutoTitle(meta.id, message);
+      // Persist the user turn + metadata before running the agent.
       this.store.appendUser(meta.id, message);
       meta.messageCount += 1;
       await this.store.touch(meta.id, {

@@ -219,6 +219,8 @@ export interface TokenUsage {
 
 export type SessionEvent =
   | { type: "session-start"; sessionId: string }
+  /** A generated title for the session's first real user turn. */
+  | { type: "title-change"; title: string }
   | { type: "text-delta"; text: string }
   | {
       type: "tool-call-start";

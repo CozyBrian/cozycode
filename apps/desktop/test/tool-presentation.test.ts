@@ -35,6 +35,15 @@ describe("desktop tool presentation", () => {
     expect(item).toMatchObject({ kind: "tool", status: "done", metadata: completed.metadata });
   });
 
+  test("stops live tool cards when an aborted turn errors", () => {
+    const items = [
+      { type: "tool-call-start", toolCallId: "call-1", toolName: "search", args: { pattern: "needle" } },
+      { type: "error", message: "The operation was aborted." },
+    ].reduce<ReturnType<typeof foldEvent>>((current, event) => foldEvent(current, event), []);
+
+    expect(items[0]).toMatchObject({ kind: "tool", status: "error", result: "Did not complete." });
+  });
+
   test("labels searches with their result count", () => {
     expect(toolLabel(tool({ result: { matches: ["a", "b"] } }))).toBe('Grep "needle" in src (2 matches)');
   });

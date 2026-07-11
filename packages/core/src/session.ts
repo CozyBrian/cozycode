@@ -13,6 +13,7 @@ import type {
 } from "@cozycode/protocol";
 import { createModel } from "./model.ts";
 import { reasoningProviderOptions } from "./reasoning.ts";
+import { generateSessionTitle } from "./title.ts";
 import { PermissionService } from "./permission/service.ts";
 import { QuestionService } from "./question/service.ts";
 import { DEFAULT_RULESET, PLAN_RULESET, mergeRulesets } from "./permission/config.ts";
@@ -40,6 +41,8 @@ export interface SessionOptions {
   isSubagent?: boolean;
   /** Test hook: build a child model for a spawned subagent (bypasses the provider). */
   spawnModel?: (agent: AgentInfo) => LanguageModel | undefined;
+  /** Optional title-model candidates, tried before this session's active model. */
+  titleModels?: LanguageModel[];
 }
 
 /**
@@ -76,6 +79,10 @@ export class Session {
   private activeModel: LanguageModel;
   /** Test hook: build a child model for a spawned subagent. */
   private subagentSpawnModel?: (agent: AgentInfo) => LanguageModel | undefined;
+  private readonly titleModels?: LanguageModel[];
+  private readonly isSubagent: boolean;
+  private readonly titleEligible: boolean;
+  private titleStarted = false;
 
   /**
    * Spawn a subagent as an isolated child `Session`, funnel its events up this
@@ -166,6 +173,9 @@ export class Session {
     );
     this.questions = new QuestionService(this.id, (e) => this.events.push(e));
     const isSubagent = options.isSubagent ?? false;
+    this.isSubagent = isSubagent;
+    this.titleModels = options.titleModels;
+    this.titleEligible = !isSubagent && !options.initialHistory?.some((message) => message.role === "user");
     this.subagentSpawnModel = options.spawnModel;
     this.tools = buildTools({
       ctx: { workspaceRoot: config.workspaceRoot },
@@ -312,6 +322,12 @@ export class Session {
       this.buildSwitchPending = false;
     }
     this.history.push({ role: "user", content: parts });
+    if (this.titleEligible && !this.titleStarted && this.titleModels) {
+      this.titleStarted = true;
+      void generateSessionTitle([...this.titleModels, this.activeModel], userMessage).then((title) => {
+        if (title) this.events.push({ type: "title-change", title });
+      });
+    }
     this.abortController = new AbortController();
     this.events.push({ type: "session-start", sessionId: this.id });
 

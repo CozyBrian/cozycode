@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
-import { createSession, loadAgents, registry, type Session, type SessionOptions } from "@cozycode/core";
+import { createModel, createSession, defaultSessionTitle, loadAgents, registry, type Session, type SessionOptions } from "@cozycode/core";
 import {
   cycleEffort,
   effortsForModel,
@@ -32,6 +32,7 @@ import {
 import { ApprovalPrompt } from "./components/ApprovalPrompt.tsx";
 import { QuestionPrompt } from "./components/QuestionPrompt.tsx";
 import { CommandPalette } from "./components/CommandPalette.tsx";
+import { DialogPrompt } from "./components/DialogPrompt.tsx";
 import { EffortDialog } from "./components/EffortDialog.tsx";
 import { Help } from "./components/Help.tsx";
 import { Logo } from "./components/Logo.tsx";
@@ -61,7 +62,7 @@ export interface AppProps {
   onExit?: () => void;
 }
 
-type Overlay = "commands" | "help" | "model" | "provider" | "sessions" | "effort" | null;
+type Overlay = "commands" | "help" | "model" | "provider" | "sessions" | "effort" | "rename" | null;
 
 const EMPTY_PROVIDERS: ProviderList = { all: [], connected: [] };
 
@@ -91,6 +92,8 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
   const [, bump] = useReducer((x: number) => x + 1, 0);
   const sessionRef = useRef<Session | null>(null);
   const sessionsRef = useRef(new Map<string, TuiSessionEntry>());
+  const sessionTitlesRef = useRef(new Map<string, string>());
+  const renamedSessionIDsRef = useRef(new Set<string>());
   const activeSessionIDRef = useRef<string | null>(null);
   const historyRef = useRef<RenderItem[]>([]);
   const usageRef = useRef<TokenUsage | undefined>(undefined);
@@ -137,6 +140,14 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
         } else if (event.type === "effort-change") {
           effortRef.current = event.effort;
           setEffort(event.effort);
+        } else if (event.type === "title-change") {
+          if (renamedSessionIDsRef.current.has(session.id)) continue;
+          sessionTitlesRef.current.set(session.id, event.title);
+          const entry = sessionsRef.current.get(session.id);
+          if (entry) {
+            sessionsRef.current.set(session.id, { ...entry, title: event.title });
+            publishSessions();
+          }
         } else if (event.type === "permission-asked") {
           setPermissionQueue((q) => [...q, event.request]);
         } else if (event.type === "permission-replied") {
@@ -183,6 +194,7 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
     preserveHistory: boolean,
     id?: string,
     initialHistory?: SessionOptions["initialHistory"],
+    titleProviderList = providers,
   ) => {
     const previous = sessionRef.current;
     const carriedHistory = initialHistory ?? (preserveHistory ? previous?.snapshotHistory() : undefined);
@@ -193,11 +205,28 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
       ...sessionOptions, // test hook may override (agents, spawnModel, model)
       ...(carriedHistory ? { initialHistory: carriedHistory } : {}),
       ...(id ? { id } : {}),
+      ...(!sessionOptions ? { titleModels: await titleModelsFor(titleProviderList) } : {}),
     };
     const session = createSession(config, options);
     sessionRef.current = session;
     pumpSession(session);
     return session;
+  };
+
+  const titleModelsFor = async (list: ProviderList) => {
+    const candidates = list.all.flatMap((provider) => list.connected.includes(provider.id)
+      ? provider.models
+        .filter((model) => model.id.toLowerCase() === "deepseek-v4-flash")
+        .map((model) => ({ providerID: provider.id, modelID: model.id }))
+      : []);
+    const models = await Promise.all(candidates.map(async ({ providerID, modelID }) => {
+      try {
+        return createModel(await registry.providerConfig(providerID), modelID);
+      } catch {
+        return undefined;
+      }
+    }));
+    return models.filter((model): model is NonNullable<typeof model> => model !== undefined);
   };
 
   const publishSessions = () => setSessions([...sessionsRef.current.values()]);
@@ -207,8 +236,9 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
     const selected = modelRef.current;
     if (!session || !selected) return;
     const id = activeSessionIDRef.current ?? session.id;
-    const firstPrompt = historyRef.current.find((item) => item.kind === "user");
-    const title = firstPrompt?.kind === "user" ? firstPrompt.text.replace(/\s+/g, " ").slice(0, 56) : "New session";
+    const title = sessionTitlesRef.current.get(id)
+      ?? sessionsRef.current.get(id)?.title
+      ?? defaultSessionTitle();
     sessionsRef.current.set(id, {
       id,
       title,
@@ -296,7 +326,7 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
       if (!selected) return setOverlay("provider");
       restoreEffortFor(selected, visible);
       try {
-        await startSession(selected, false);
+        await startSession(selected, false, undefined, undefined, visible);
       } catch (error) {
         if (!cancelled) {
           setHistory([{ id: "startup-error", kind: "error", text: error instanceof Error ? error.message : String(error) }]);
@@ -368,6 +398,14 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
     // esc while drilled in. Only abort when neither is active.
     if (key.name === "escape" && busy && permissionQueue.length === 0 && questionQueue.length === 0 && !drill) {
       sessionRef.current?.abort();
+      // End the local turn immediately; a provider can take time to deliver the
+      // stream cancellation, but the UI should not keep presenting it as live.
+      const turn = turnRef.current;
+      if (turn.length > 0) {
+        setHistory((history) => [...history, ...finalizeTurn(turn, "Stopped.")]);
+        turnRef.current = [];
+      }
+      setBusy(false);
     }
   });
 
@@ -393,13 +431,14 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
       setActiveSessionID(session.id);
       sessionsRef.current.set(session.id, {
         id: session.id,
-        title: "New session",
+        title: defaultSessionTitle(),
         history: [],
         model: selected,
         mode: modeRef.current,
         effort: effortRef.current,
         coreHistory: [],
       });
+      sessionTitlesRef.current.set(session.id, sessionsRef.current.get(session.id)!.title);
       publishSessions();
       setOverlay(null);
     } catch (error) {
@@ -496,6 +535,9 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
       if (busy) return;
       saveActiveSession();
       setOverlay("sessions");
+    },
+    openRenameSession: () => {
+      if (!busy && sessionRef.current) setOverlay("rename");
     },
     openModelPicker: () => setOverlay("model"),
     openProviderPicker: () => setOverlay("provider"),
@@ -606,7 +648,7 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
           nextModel,
           ...items.filter((item) => item.providerID !== providerID || item.modelID !== first.id),
         ].slice(0, 8));
-        void startSession(nextModel, Boolean(sessionRef.current))
+        void startSession(nextModel, Boolean(sessionRef.current), undefined, undefined, next)
           .then(() => setOverlay(null))
           .catch((error) => commandCtx.notify("error", error instanceof Error ? error.message : String(error)));
         return;
@@ -677,6 +719,25 @@ export function App({ initialSession, initialModel, workspaceRoot, sessionOption
               current={effort}
               onSelect={(level) => {
                 applyEffort(level);
+                setOverlay(null);
+              }}
+              onCancel={() => setOverlay(null)}
+            />
+          ) : null}
+          {overlay === "rename" ? (
+            <DialogPrompt
+              title="Rename session"
+              label="Enter a new title"
+              onSubmit={(value) => {
+                const id = activeSessionIDRef.current ?? sessionRef.current?.id;
+                const title = value.trim();
+                if (id && title) {
+                  renamedSessionIDsRef.current.add(id);
+                  sessionTitlesRef.current.set(id, title);
+                  const entry = sessionsRef.current.get(id);
+                  if (entry) sessionsRef.current.set(id, { ...entry, title });
+                  publishSessions();
+                }
                 setOverlay(null);
               }}
               onCancel={() => setOverlay(null)}

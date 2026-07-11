@@ -391,7 +391,17 @@ export const useApp = create<AppState>((set, get) => ({
     void get().refreshSessions();
   },
 
-  abort: () => void window.cozy.abort(),
+  abort: () => {
+    // Providers may take time to acknowledge an abort. End the local turn now
+    // so the stop control and transcript never remain visually active.
+    set((s) => ({
+      busy: false,
+      items: foldEvent(s.items, { type: "finish", reason: "abort" }),
+      permissionQueue: [],
+      questionQueue: [],
+    }));
+    void window.cozy.abort();
+  },
 
   setPreset(preset) {
     set({ preset });

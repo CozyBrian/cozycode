@@ -282,8 +282,25 @@ describe("TUI App (integration, mock model)", () => {
     await app.mockInput.typeText("/sessions");
     app.mockInput.pressEnter();
     await app.waitForFrame((frame) => frame.includes("Switch session"));
-    expect(app.captureCharFrame()).toContain("New session");
+    expect(app.captureCharFrame()).toContain("New session -");
     app.mockInput.pressEscape();
+    app.renderer.destroy();
+  });
+
+  test("renames the active session with /rename", async () => {
+    const app = await renderApp("allow", "x");
+    await app.flush();
+    await app.mockInput.typeText("/rename");
+    app.mockInput.pressEnter();
+    await app.waitForFrame((frame) => frame.includes("Rename session"));
+    await app.mockInput.typeText("Release checklist");
+    await app.flush();
+    app.mockInput.pressEnter();
+    await app.waitForFrame((frame) => !frame.includes("Rename session"));
+    await app.mockInput.typeText("/sessions");
+    app.mockInput.pressEnter();
+    await app.waitForFrame((frame) => frame.includes("Switch session"));
+    expect(app.captureCharFrame()).toContain("Release checklist");
     app.renderer.destroy();
   });
 

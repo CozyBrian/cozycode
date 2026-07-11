@@ -138,17 +138,23 @@ export function foldTurn(items: RenderItem[], event: SessionEvent): RenderItem[]
           : it,
       );
     case "error":
-      return [...items, { id: nextId(), kind: "error", text: event.message }];
+      return [...finalizeTurn(items, "Did not complete."), { id: nextId(), kind: "error", text: event.message }];
+    case "finish":
+      return finalizeTurn(items, event.reason === "abort" ? "Stopped." : "Did not complete.");
     default:
       return items;
   }
 }
 
-/** Mark trailing assistant / reasoning items as no longer streaming (turn ended). */
-export function finalizeTurn(items: RenderItem[]): RenderItem[] {
-  return items.map((it) =>
-    it.kind === "assistant" || it.kind === "reasoning" ? { ...it, streaming: false } : it,
-  );
+/** Mark live presentation items as complete when a turn ends. */
+export function finalizeTurn(items: RenderItem[], incompleteToolResult = "Did not complete."): RenderItem[] {
+  return items.map((it) => {
+    if (it.kind === "assistant" || it.kind === "reasoning") return { ...it, streaming: false };
+    if (it.kind === "tool" && it.status === "running") {
+      return { ...it, status: "error", result: incompleteToolResult };
+    }
+    return it;
+  });
 }
 
 function statusFor(isError: boolean, result: unknown): ToolStatus {

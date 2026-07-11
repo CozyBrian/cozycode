@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir, readFile, writeFile, rename, rm, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { ModelMessage } from "@cozycode/core";
+import { defaultSessionTitle, type ModelMessage } from "@cozycode/core";
 import type { ModelRef, SessionEvent } from "@cozycode/protocol";
 import type {
   PermissionPreset,
@@ -14,14 +14,6 @@ import type {
 interface IndexFile {
   version: 1;
   sessions: SessionMeta[];
-}
-
-const MAX_TITLE = 60;
-
-function deriveTitle(text: string): string {
-  const clean = text.replace(/\s+/g, " ").trim();
-  if (clean.length <= MAX_TITLE) return clean || "New chat";
-  return clean.slice(0, MAX_TITLE - 1).trimEnd() + "…";
 }
 
 /**
@@ -119,7 +111,7 @@ export class SessionStore {
     const idx = await this.loadIndex();
     const meta: SessionMeta = {
       id: opts.id ?? randomUUID(),
-      title: opts.title ?? "New chat",
+      title: opts.title ?? defaultSessionTitle(new Date(opts.now)),
       titleEdited: Boolean(opts.title),
       createdAt: opts.now,
       updatedAt: opts.now,
@@ -273,12 +265,12 @@ export class SessionStore {
     return write;
   }
 
-  /** Auto-title from the first user message if the user hasn't renamed it. */
-  async maybeAutoTitle(id: string, firstMessage: string): Promise<boolean> {
+  /** Apply a generated first-turn title unless the user renamed the session. */
+  async applyGeneratedTitle(id: string, title: string): Promise<boolean> {
     const idx = await this.loadIndex();
     const meta = idx.sessions.find((s) => s.id === id);
-    if (!meta || meta.titleEdited || meta.messageCount > 0) return false;
-    meta.title = deriveTitle(firstMessage);
+    if (!meta || meta.titleEdited || meta.messageCount > 1) return false;
+    meta.title = title;
     await this.persistIndex();
     return true;
   }

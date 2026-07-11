@@ -25,4 +25,13 @@ describe("foldTurn reasoning blocks", () => {
     expect(reasoning[1]!.durationMs).toBe(21000);
     expect(reasoning.every((r) => !r.streaming)).toBe(true);
   });
+
+  test("stops live tool rows when an aborted turn errors", () => {
+    const items = fold([
+      { type: "tool-call-start", toolCallId: "call-1", toolName: "search", args: { pattern: "needle" } },
+      { type: "error", message: "The operation was aborted." },
+    ]);
+
+    expect(items[0]).toMatchObject({ kind: "tool", status: "error", result: "Did not complete." });
+  });
 });

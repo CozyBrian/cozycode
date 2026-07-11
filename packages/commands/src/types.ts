@@ -16,6 +16,8 @@ export interface CommandContext {
   openProviderPicker(): void;
   /** Open the session switcher when the frontend supports multiple sessions. */
   openSessionPicker?(): void;
+  /** Open a title editor for the active session when supported. */
+  openRenameSession?(): void;
   /** Directly switch to a model by id or provider/model reference. */
   setModel?(id: string): void;
   /** Set the reasoning effort ("default"/"" clears). Absent when unsupported. */

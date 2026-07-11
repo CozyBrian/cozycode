@@ -135,14 +135,23 @@ export function foldEvent(items: TranscriptItem[], event: SessionEvent): Transcr
           : it,
       );
     case "error":
-      return [...items, { id: nextId(), kind: "error", text: event.message }];
+      return [...finalizeTranscript(items, "Did not complete."), { id: nextId(), kind: "error", text: event.message }];
     case "finish":
-      return items.map((it) =>
-        it.kind === "assistant" || it.kind === "reasoning" ? { ...it, streaming: false } : it,
-      );
+      return finalizeTranscript(items, event.reason === "abort" ? "Stopped." : "Did not complete.");
     default:
       return items; // session-start, permission/question control events, step-finish, mode/effort-change are not rendered directly
   }
+}
+
+/** Close every live presentation item when a turn ends without its usual result event. */
+function finalizeTranscript(items: TranscriptItem[], incompleteToolResult: string): TranscriptItem[] {
+  return items.map((it) => {
+    if (it.kind === "assistant" || it.kind === "reasoning") return { ...it, streaming: false };
+    if (it.kind === "tool" && it.status === "running") {
+      return { ...it, status: "error", result: incompleteToolResult };
+    }
+    return it;
+  });
 }
 
 function statusFor(isError: boolean, result: unknown): ToolStatus {

@@ -24,6 +24,13 @@ export const COMMAND_DEFS: CommandDef[] = [
     run: (ctx) => ctx.openSessionPicker?.(),
   }),
   defineCommand({
+    name: "rename",
+    title: "Rename session",
+    category: "session",
+    description: "Rename the active session",
+    run: (ctx) => ctx.openRenameSession?.(),
+  }),
+  defineCommand({
     name: "model",
     title: "Switch model",
     aliases: ["models"],

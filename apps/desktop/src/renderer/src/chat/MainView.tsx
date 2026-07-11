@@ -83,7 +83,7 @@ export function MainView() {
   const project = projectLabel(active?.workspaceRoot ?? null);
   const empty = items.length === 0 && !busy;
   const started = !empty;
-  const title = active?.title === "New chat" ? "" : (active?.title ?? "");
+  const title = active?.title.startsWith("New session - ") ? "" : (active?.title ?? "");
 
   if (empty) {
     return (
