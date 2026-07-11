@@ -4,6 +4,7 @@ import { formatTranscriptMarkdown, type MarkdownTranscriptItem } from "@cozycode
 import {
   createSession,
   createModel,
+  generateModelText,
   loadAgents,
   mergeRulesets,
   rulesetFromConfig,
@@ -14,15 +15,25 @@ import type {
   PermissionReplyBody,
   QuestionReplyBody,
   ModelRef,
+  ProviderList,
   SessionConfig,
   SessionEvent,
 } from "@cozycode/protocol";
-import { IPC, type PermissionPreset, type SessionMeta, type SessionRecord, type SessionSnapshot } from "../shared/ipc.ts";
+import {
+  IPC,
+  type GitCommitDraft,
+  type GitPullRequestDraft,
+  type PermissionPreset,
+  type SessionMeta,
+  type SessionRecord,
+  type SessionSnapshot,
+} from "../shared/ipc.ts";
 import type { SettingsStore } from "./settings.ts";
 import type { ProviderBridge } from "./providers.ts";
 import { SessionStore } from "./session-store.ts";
 import { TerminalManager } from "./terminal-manager.ts";
 import { GitManager } from "./git-manager.ts";
+import { splitCommitDraft } from "./git-drafts.ts";
 import { resolvePreset } from "./presets.ts";
 
 /**
@@ -169,6 +180,67 @@ export class SessionManager {
     this.git.setCwd(meta.workspaceRoot);
     const records = await this.store.readRecords(id);
     return { meta, records };
+  }
+
+  async generateCommitDraft(): Promise<GitCommitDraft> {
+    await this.git.stageAll();
+    const context = await this.git.commitContext();
+    const text = await this.generateGitText("commit", [
+      "Generate a Conventional Commit message from the staged git changes below.",
+      "Output ONLY the commit message with no extra commentary.",
+      "Format:",
+      "- First line: conventional commit subject (e.g., feat:, fix:, chore:, docs:, refactor:, test:)",
+      "- Blank line",
+      "- 2 to 5 bullet points describing the changes",
+      "Avoid quoting diffs verbatim unless needed for clarity.",
+      "",
+      "git status:", context.status || "(no output)",
+      "",
+      "git diff --cached --stat:", context.stat || "(no changes)",
+      "",
+      "git diff --cached:", context.diff || "(no changes)",
+    ].join("\n"));
+    const { subject, body } = splitCommitDraft(text);
+    if (!subject) throw new Error("The generated commit message did not contain a subject.");
+    return { subject, body, index: context.index };
+  }
+
+  async commitGitDraft(draft: GitCommitDraft): Promise<void> {
+    await this.git.commit(draft.subject, draft.body, draft.index);
+  }
+
+  pullRequestBases(): Promise<string[]> {
+    return this.git.pullRequestBases();
+  }
+
+  async generatePullRequestDraft(base: string): Promise<GitPullRequestDraft> {
+    const context = await this.git.pullRequestContext(base);
+    const text = await this.generateGitText("pullRequest", [
+      "Generate a PR description from the following git outputs.",
+      "Return markdown formatted text suitable for a pull request description.",
+      "Avoid quoting diffs verbatim unless needed for clarity.",
+      "",
+      "git status:", context.status || "(no output)",
+      "",
+      `git log --oneline ${context.base}..HEAD:`, context.log || "(no commits)",
+      "",
+      `git diff ${context.base}..HEAD --stat:`, context.stat || "(no changes)",
+      "",
+      `git diff ${context.base}..HEAD:`, context.diff || "(no changes)",
+    ].join("\n"));
+    if (!text.trim()) throw new Error("The generated PR description was empty.");
+    return { markdown: text.trim(), base: context.base };
+  }
+
+  private async generateGitText(flow: "commit" | "pullRequest", prompt: string): Promise<string> {
+    if (!this.activeMeta) throw new Error("No active session.");
+    const settings = await this.settings.getPublic();
+    const preferred = flow === "commit" ? settings?.gitCommitModel : settings?.gitPullRequestModel;
+    const list = await this.providers.list();
+    const modelRef = usableModel(preferred, list) ? preferred : this.activeMeta.model;
+    if (!usableModel(modelRef, list)) throw new Error("The active model is unavailable. Connect a provider in Settings.");
+    const model = createModel(await this.providers.providerConfig(modelRef.providerID), modelRef.modelID);
+    return generateModelText(model, prompt);
   }
 
   /**
@@ -326,6 +398,12 @@ export class SessionManager {
     await this.store.dispose();
   }
 }
+
+function usableModel(model: ModelRef | undefined, providers: ProviderList): model is ModelRef {
+  if (!model || !providers.connected.includes(model.providerID)) return false;
+  return Boolean(providers.all.find((provider) => provider.id === model.providerID)?.models.some((item) => item.id === model.modelID));
+}
+
 
 function markdownItems(records: SessionRecord[]): MarkdownTranscriptItem[] {
   const items: MarkdownTranscriptItem[] = [];

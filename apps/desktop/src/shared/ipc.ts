@@ -33,6 +33,10 @@ export interface AppSettings {
   reasoningEfforts?: Record<string, string>;
   /** Show model context window sizes in the model picker. */
   showContextSize?: boolean;
+  /** Optional model used to draft commit messages; the active session model is the fallback. */
+  gitCommitModel?: ModelRef;
+  /** Optional model used to draft pull request descriptions; the active session model is the fallback. */
+  gitPullRequestModel?: ModelRef;
 }
 
 export interface AppSettingsInput extends AppSettings {}
@@ -109,6 +113,18 @@ export interface GitStatus {
   files: GitFileStatus[];
 }
 
+export interface GitCommitDraft {
+  subject: string;
+  body: string;
+  /** Index fingerprint captured with the staged patch; rejects stale commit drafts. */
+  index: string;
+}
+
+export interface GitPullRequestDraft {
+  markdown: string;
+  base: string;
+}
+
 /** IPC channel names, centralized so main/preload/renderer agree. */
 export const IPC = {
   settingsGet: "settings:get",
@@ -146,6 +162,10 @@ export const IPC = {
   // git
   gitStatus: "git:status",
   gitDiff: "git:diff",
+  gitCommitDraft: "git:commit-draft",
+  gitCommit: "git:commit",
+  gitPullRequestBases: "git:pull-request-bases",
+  gitPullRequestDraft: "git:pull-request-draft",
   // main -> renderer (push)
   sessionEvent: "session:event",
   sessionsChanged: "sessions:changed",
@@ -203,11 +223,15 @@ export interface CozyApi {
     onExit(cb: (payload: TermExit) => void): () => void;
   };
 
-  // git (read-only view of the active workspace)
+  // git
   git: {
     status(): Promise<GitStatus>;
     /** Unified diff for one path; `staged` selects the index vs working-tree diff. */
     diff(path: string, staged: boolean): Promise<string>;
+    generateCommitDraft(): Promise<GitCommitDraft>;
+    commit(draft: GitCommitDraft): Promise<void>;
+    pullRequestBases(): Promise<string[]>;
+    generatePullRequestDraft(base: string): Promise<GitPullRequestDraft>;
     onChanged(cb: (status: GitStatus) => void): () => void;
   };
 

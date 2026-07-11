@@ -56,7 +56,7 @@ export function DiffsPane() {
           <span className="text-destructive">-{counts.deletions}</span>
         </span>
       </div>
-      <div className="selectable min-h-0 flex-1 overflow-auto">
+      <div className="content-panel-scroll selectable min-h-0 flex-1 overflow-auto">
         {files.length > 0 ? (
           files.map((fileDiff, i) => <FileDiff key={i} fileDiff={fileDiff} options={DIFF_OPTIONS} />)
         ) : (

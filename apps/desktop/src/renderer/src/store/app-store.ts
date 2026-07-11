@@ -163,6 +163,7 @@ export type SettingsSection =
   | "workspace"
   | "permissions"
   | "appearance"
+  | "git"
   | "advanced";
 
 const presetToMode = (p: PermissionPreset): AgentMode => (p === "plan" ? "plan" : "build");

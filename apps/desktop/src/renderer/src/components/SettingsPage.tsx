@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Check, ChevronRight, FolderOpen, KeyRound, Palette, Shield, SlidersHorizontal, TerminalSquare, X } from "lucide-react";
+import { Check, ChevronRight, FolderOpen, GitBranch, KeyRound, Palette, Shield, SlidersHorizontal, TerminalSquare, X } from "lucide-react";
+import type { ModelRef } from "@cozycode/protocol";
 import { useApp, type SettingsSection } from "../store/app-store";
 import { ProvidersSection } from "./settings/ProvidersSection";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,7 @@ const sections: Array<{ id: SettingsSection; label: string; icon: typeof Sliders
   { id: "workspace", label: "Workspace", icon: FolderOpen },
   { id: "permissions", label: "Permissions", icon: Shield },
   { id: "appearance", label: "Appearance", icon: Palette },
+  { id: "git", label: "Git", icon: GitBranch },
   { id: "advanced", label: "Advanced", icon: TerminalSquare },
 ];
 
@@ -23,11 +25,15 @@ export function SettingsPage() {
   const configured = Boolean(initial?.workspaceRoot && providers?.connected.length);
   const [workspaceRoot, setWorkspaceRoot] = useState(initial?.workspaceRoot ?? "");
   const [showContextSize, setShowContextSize] = useState(initial?.showContextSize ?? false);
+  const [gitCommitModel, setGitCommitModel] = useState<ModelRef | undefined>(initial?.gitCommitModel);
+  const [gitPullRequestModel, setGitPullRequestModel] = useState<ModelRef | undefined>(initial?.gitPullRequestModel);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => setWorkspaceRoot(initial?.workspaceRoot ?? ""), [initial]);
   useEffect(() => setShowContextSize(initial?.showContextSize ?? false), [initial]);
+  useEffect(() => setGitCommitModel(initial?.gitCommitModel), [initial]);
+  useEffect(() => setGitPullRequestModel(initial?.gitPullRequestModel), [initial]);
 
   const save = async () => {
     if (!workspaceRoot) return setError("A workspace folder is required.");
@@ -38,11 +44,14 @@ export function SettingsPage() {
     setSaving(true);
     try {
       const saved = await window.cozy.saveSettings({
+        ...initial,
         workspaceRoot,
         openWorkspaceRoots: workspaceRoots(workspaceRoot, initial?.openWorkspaceRoots),
         permissions: initial?.permissions,
         recentModels: useApp.getState().recentModels,
         showContextSize,
+        gitCommitModel,
+        gitPullRequestModel,
       });
       useApp.getState().setSettings(saved);
       useApp.getState().closeSettings();
@@ -109,6 +118,15 @@ export function SettingsPage() {
                   <span className="text-sm">Show context window sizes</span>
                 </label>
               </section>
+            ) : section === "git" ? (
+              <section className="rounded-2xl border border-border/70 bg-white/3 p-5">
+                <div className="mb-1 flex items-center gap-2"><GitBranch className="size-4 text-primary" /><h2 className="text-sm font-semibold">AI Git messages</h2></div>
+                <p className="mb-5 text-sm text-muted-foreground">Choose a model for each flow, or use the active session model.</p>
+                <div className="flex flex-col gap-4">
+                  <ModelPreference label="Commit message" value={gitCommitModel} providers={providers} onChange={setGitCommitModel} />
+                  <ModelPreference label="Pull request description" value={gitPullRequestModel} providers={providers} onChange={setGitPullRequestModel} />
+                </div>
+              </section>
             ) : (
               <section className="rounded-2xl border border-border/70 bg-white/3 p-5 text-sm text-muted-foreground">These settings are coming soon.</section>
             )}
@@ -121,5 +139,37 @@ export function SettingsPage() {
         </main>
       </div>
     </div>
+  );
+}
+
+function ModelPreference({ label, value, providers, onChange }: {
+  label: string;
+  value: ModelRef | undefined;
+  providers: ReturnType<typeof useApp.getState>["providers"];
+  onChange(value: ModelRef | undefined): void;
+}) {
+  const key = value ? JSON.stringify([value.providerID, value.modelID]) : "";
+  const connected = providers?.all.filter((provider) => providers.connected.includes(provider.id)) ?? [];
+  const available = value && connected.some((provider) => provider.id === value.providerID && provider.models.some((model) => model.id === value.modelID));
+  return (
+    <label className="grid gap-1.5 text-sm">
+      <span className="font-medium">{label}</span>
+      <select
+        value={key}
+        onChange={(event) => {
+          const [providerID, modelID] = JSON.parse(event.target.value || "[]") as string[];
+          onChange(providerID && modelID ? { providerID, modelID } : undefined);
+        }}
+        className="h-9 rounded-md border border-border/70 bg-background/50 px-2 text-sm outline-none focus:border-primary"
+      >
+        <option value="">Active session model</option>
+        {value && !available ? <option value={key} disabled>{key} (unavailable)</option> : null}
+        {connected.map((provider) => (
+          <optgroup key={provider.id} label={provider.name}>
+            {provider.models.map((model) => <option key={model.id} value={JSON.stringify([provider.id, model.id])}>{model.name}</option>)}
+          </optgroup>
+        ))}
+      </select>
+    </label>
   );
 }

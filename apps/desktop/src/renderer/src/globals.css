@@ -126,6 +126,13 @@
   .selectable {
     user-select: text;
   }
+  /* Inspector scrollbars should not consume its narrow reading width. */
+  .content-panel-scroll {
+    scrollbar-width: none;
+  }
+  .content-panel-scroll::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 /* Slim, unobtrusive scrollbars matching the dark surface. */

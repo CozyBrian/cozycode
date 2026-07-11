@@ -84,7 +84,7 @@ export function ContentPanel() {
             <TabButton key={t.id} {...t} />
           ))}
         </header>
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div className="content-panel-scroll min-h-0 flex-1 overflow-auto">
           <PaneBody />
         </div>
       </div>

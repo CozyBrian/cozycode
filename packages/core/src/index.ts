@@ -31,6 +31,7 @@ export {
 export { AsyncEventQueue } from "./events.ts";
 export { createModel } from "./model.ts";
 export { defaultSessionTitle, generateSessionTitle } from "./title.ts";
+export { generateModelText } from "./generate.ts";
 export { reasoningEfforts, reasoningProviderOptions } from "./reasoning.ts";
 export { fetchModels, mergeModels } from "./models.ts";
 export { AuthStore, ProviderRegistry, auth, registry } from "./providers.ts";

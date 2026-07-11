@@ -11,6 +11,7 @@ import { Help } from "./components/Help";
 import { TextShimmer } from "./components/TextShimmer";
 import { TitleControls } from "./layout/TitleBar";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { Toaster } from "@/components/ui/sonner";
 
 export function App() {
   const loaded = useApp((s) => s.loaded);
@@ -90,6 +91,7 @@ export function App() {
         />
       )}
       <Help open={helpOpen} onClose={() => setHelpOpen(false)} />
+      <Toaster theme="dark" position="bottom-right" richColors />
     </TooltipProvider>
   );
 }
