@@ -278,7 +278,7 @@ export const useApp = create<AppState>((set, get) => ({
       providers,
       recentModels: settings?.recentModels ?? [],
       loaded: true,
-      settingsOpen: !configured,
+      settingsOpen: !configured || get().settingsOpen,
       settingsSection: providers.connected.length ? "general" : "providers",
     });
     const sessions = await window.cozy.listSessions();
@@ -365,7 +365,7 @@ export const useApp = create<AppState>((set, get) => ({
       // Non-fatal; the pane keeps its last snapshot.
     }
   },
-  openSettings: (section = "general") => set({ settingsOpen: true, settingsSection: section }),
+  openSettings: (section = "general") => set({ settingsOpen: true, settingsSection: section, contentPanelOpen: false }),
   closeSettings: () => set({ settingsOpen: false }),
   setHelpOpen: (open) => set({ helpOpen: open }),
   setModelPickerOpen: (open) => set({ modelPickerOpen: open }),
@@ -423,6 +423,11 @@ export const useApp = create<AppState>((set, get) => ({
       return { subagentHistoryIndex, subagentView: s.subagentHistory[subagentHistoryIndex] ?? null };
     }),
   navigateBack: () => {
+    if (get().settingsOpen) {
+      const { settings, providers } = get();
+      if (settings?.workspaceRoot && providers?.connected.length) get().closeSettings();
+      return;
+    }
     const { subagentHistoryIndex, sessionHistoryIndex } = get();
     if (subagentHistoryIndex > 0) {
       get().navigateSubagentBack();
@@ -435,6 +440,7 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
   navigateForward: () => {
+    if (get().settingsOpen) return;
     const { subagentHistory, subagentHistoryIndex, sessionHistory, sessionHistoryIndex } = get();
     if (subagentHistoryIndex < subagentHistory.length - 1) {
       get().navigateSubagentForward();
@@ -456,6 +462,7 @@ export const useApp = create<AppState>((set, get) => ({
     const empty = emptySessionForWorkspace(get().sessions, root);
     if (empty) {
       if (empty.id !== get().activeId) await get().activateSession(empty.id);
+      else set({ settingsOpen: false });
       return;
     }
 
@@ -474,6 +481,7 @@ export const useApp = create<AppState>((set, get) => ({
       subagentView: null,
       subagentHistory: [null],
       subagentHistoryIndex: 0,
+      settingsOpen: false,
       sessionHistory: [...get().sessionHistory.slice(0, get().sessionHistoryIndex + 1), snap.meta.id],
       sessionHistoryIndex: get().sessionHistoryIndex + 1,
     });
@@ -503,6 +511,7 @@ export const useApp = create<AppState>((set, get) => ({
       subagentView: null,
       subagentHistory: [null],
       subagentHistoryIndex: 0,
+      settingsOpen: false,
       sessionHistory: nextHistory,
       sessionHistoryIndex: nextHistoryIndex,
     });

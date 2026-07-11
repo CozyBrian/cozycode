@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Check, Copy, ExternalLink, LoaderCircle, Plus, Unplug } from "lucide-react";
 import type { CustomProviderInput, OAuthStart, ProviderInfo, ProviderList } from "@cozycode/protocol";
 import { useApp } from "../../store/app-store";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -55,7 +54,7 @@ function ConnectCard({ provider, onDone }: { provider: ProviderInfo; onDone(): v
   if (api) return <ApiKeyForm provider={provider} onDone={() => setApi(false)} />;
   if (waiting) {
     return (
-      <div className="mt-3 rounded-lg border border-border/70 bg-black/10 p-4">
+      <div className="mt-4 border-y border-border/60 py-4">
         <div className="flex items-center gap-2 text-sm font-medium">
           <LoaderCircle className="size-4 animate-spin" /> Waiting for authorization…
         </div>
@@ -128,7 +127,7 @@ function CustomProviderForm({ onDone }: { onDone(): void }) {
   const validID = /^[a-z0-9][a-z0-9-_]*$/.test(draft.id);
   return (
     <form
-      className="mt-4 grid gap-3 rounded-xl border border-border/70 bg-white/3 p-4"
+      className="mt-5 grid gap-3 border-y border-border/60 py-5"
       onSubmit={async (event) => {
         event.preventDefault();
         if (!validID) return setError("Use lowercase letters, numbers, hyphens, or underscores.");
@@ -180,8 +179,8 @@ export function ProvidersSection() {
       return connected || a.name.localeCompare(b.name);
     });
   return (
-    <section className="rounded-2xl border border-border/70 bg-white/3 p-5">
-      <div className="mb-4 flex items-center justify-between">
+    <section>
+      <div className="mb-6 flex items-center justify-between">
         <div>
           <h2 className="text-sm font-semibold">Model providers</h2>
           <p className="mt-1 text-xs text-muted-foreground">Credentials are stored in ~/.config/cozycode/auth.json.</p>
@@ -194,21 +193,21 @@ export function ProvidersSection() {
         placeholder="Search providers…"
         className="mb-3"
       />
-      <div className="grid gap-2">
+      <div className="border-y border-border/70">
         {sorted.map((provider) => {
           const connected = providers?.connected.includes(provider.id) ?? false;
           return (
-            <div key={provider.id} className="rounded-xl border border-border/70 px-4 py-3">
+            <div key={provider.id} className="border-b border-border/60 py-4 last:border-b-0">
               <div className="flex items-center gap-3">
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 text-sm">
                     <span className="font-medium">{provider.name}</span>
-                    {provider.source === "custom" && <Badge variant="outline">Custom</Badge>}
-                    <Badge variant={connected ? "secondary" : "outline"} className={connected ? "text-emerald-400" : ""}>
-                      {connected ? <><Check className="size-3" /> Connected</> : "Not connected"}
-                    </Badge>
+                    {provider.source === "custom" && <span className="text-muted-foreground">Custom</span>}
                   </div>
-                  <p className="mt-1 text-xs text-muted-foreground">{provider.models.length} models</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {connected ? <><Check className="mr-1 inline size-3 text-emerald-400" />Connected</> : "Not connected"}
+                    <span className="mx-1.5">/</span>{provider.models.length} models
+                  </p>
                 </div>
                 {connected ? (
                   <Button variant="ghost" onClick={async () => apply(await window.cozy.providers.disconnect(provider.id))}>

@@ -4,7 +4,6 @@ import { preloadHighlighter } from "@pierre/diffs";
 import { useApp } from "./store/app-store";
 import { useGlobalShortcuts } from "./lib/shortcuts";
 import { AppLayout } from "./layout/AppLayout";
-import { SettingsPage } from "./components/SettingsPage";
 import { PermissionModal } from "./components/PermissionModal";
 import { QuestionModal } from "./components/QuestionModal";
 import { Help } from "./components/Help";
@@ -73,13 +72,14 @@ export function App() {
         </div>,
         document.body,
       )}
-      {createPortal(
-        <div className="fixed top-0 right-0 z-50 app-no-drag flex h-12 items-center">
-          <ViewControls />
-        </div>,
-        document.body,
-      )}
-      {settingsOpen ? <SettingsPage /> : <AppLayout />}
+      {!settingsOpen &&
+        createPortal(
+          <div className="fixed top-0 right-0 z-50 app-no-drag flex h-12 items-center">
+            <ViewControls />
+          </div>,
+          document.body,
+        )}
+      <AppLayout />
       {permissionQueue[0] && (
         <PermissionModal
           request={permissionQueue[0]}

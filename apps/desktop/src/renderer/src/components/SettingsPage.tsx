@@ -1,29 +1,43 @@
 import { useEffect, useState } from "react";
-import { Check, ChevronRight, FolderOpen, KeyRound, Palette, Shield, SlidersHorizontal, TerminalSquare, X } from "lucide-react";
-import { useApp, type SettingsSection } from "../store/app-store";
+import { Check } from "lucide-react";
+import { useApp } from "../store/app-store";
 import { ProvidersSection } from "./settings/ProvidersSection";
+import { SETTINGS_SECTIONS } from "./settings/sections";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { workspaceRoots } from "../../../shared/workspaces.ts";
 
-const sections: Array<{ id: SettingsSection; label: string; icon: typeof SlidersHorizontal }> = [
-  { id: "general", label: "General", icon: SlidersHorizontal },
-  { id: "providers", label: "Providers", icon: KeyRound },
-  { id: "workspace", label: "Workspace", icon: FolderOpen },
-  { id: "permissions", label: "Permissions", icon: Shield },
-  { id: "appearance", label: "Appearance", icon: Palette },
-  { id: "advanced", label: "Advanced", icon: TerminalSquare },
-];
+function SettingRow({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex min-h-20 items-center justify-between gap-6 border-b border-border/60 py-4 last:border-b-0">
+      <div className="min-w-0">
+        <div className="text-sm font-medium">{title}</div>
+        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+      </div>
+      <div className="app-no-drag shrink-0">{children}</div>
+    </div>
+  );
+}
 
 export function SettingsPage() {
   const initial = useApp((state) => state.settings);
   const providers = useApp((state) => state.providers);
   const section = useApp((state) => state.settingsSection);
+  const sidebarOpen = useApp((state) => state.sidebarOpen);
   const configured = Boolean(initial?.workspaceRoot && providers?.connected.length);
   const [workspaceRoot, setWorkspaceRoot] = useState(initial?.workspaceRoot ?? "");
   const [showContextSize, setShowContextSize] = useState(initial?.showContextSize ?? false);
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => setWorkspaceRoot(initial?.workspaceRoot ?? ""), [initial]);
@@ -46,7 +60,7 @@ export function SettingsPage() {
         showContextSize,
       });
       useApp.getState().setSettings(saved);
-      useApp.getState().closeSettings();
+      setSaved(true);
       if (!configured) await useApp.getState().bootstrap();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -55,51 +69,56 @@ export function SettingsPage() {
     }
   };
 
+  const activeSection = SETTINGS_SECTIONS.find((item) => item.id === section)!;
+  const canSave = section === "general" || section === "workspace" || section === "appearance";
+  const workspaceTitle = section === "general" ? "Default workspace" : "Workspace folder";
+
   return (
-    <div className="flex h-screen min-h-0 flex-col bg-surface-content backdrop-blur-2xl">
-      <header className="app-drag flex h-12 shrink-0 items-center justify-between border-b border-border/60 px-3">
-        <div className="min-w-0 truncate px-2 pl-28 text-sm font-medium text-foreground/85">Settings</div>
-        {configured && (
-          <button type="button" onClick={() => useApp.getState().closeSettings()} className="app-no-drag flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-white/8 hover:text-foreground">
-            <X className="size-4" />
-          </button>
-        )}
+    <div className="flex h-full min-h-0 flex-col">
+      <header className="app-drag flex h-12 shrink-0 items-center border-b border-border/60 px-6">
+        <div
+          className={cn(
+            "min-w-0 truncate text-sm font-medium text-foreground/85 duration-200",
+            !sidebarOpen && "pl-42",
+          )}
+        >
+          Settings
+        </div>
       </header>
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        <aside className="w-64 shrink-0 border-r border-border/70 bg-sidebar/80 p-3 backdrop-blur-2xl">
-          <div className="mb-3 px-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Configure</div>
-          <nav className="flex flex-col gap-1">
-            {sections.map((item) => {
-              const Icon = item.icon;
-              const active = item.id === section;
-              return (
-                <button key={item.id} type="button" onClick={() => useApp.setState({ settingsSection: item.id })} className={cn("app-no-drag flex items-center gap-2 rounded-lg px-2 py-2 text-left text-sm", active ? "bg-white/10 text-foreground" : "text-muted-foreground hover:bg-white/6 hover:text-foreground")}>
-                  <Icon className="size-4" /><span className="flex-1">{item.label}</span>{active && <ChevronRight className="size-3.5" />}
-                </button>
-              );
-            })}
-          </nav>
-        </aside>
-        <main className="min-w-0 flex-1 overflow-y-auto p-6">
-          <div className="max-w-3xl">
-            <div className="mb-6"><h1 className="text-2xl font-semibold tracking-tight">{sections.find((item) => item.id === section)?.label}</h1></div>
+      <main className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
+        <div className="mx-auto max-w-220">
+          <div className="max-w-4xl">
+            <div className="mb-10">
+              <h1 className="text-2xl font-semibold tracking-tight">{activeSection.label}</h1>
+              <p className="mt-2 text-base text-muted-foreground">{activeSection.description}</p>
+            </div>
             {section === "providers" ? <ProvidersSection /> : section === "workspace" || section === "general" ? (
-              <section className="rounded-2xl border border-border/70 bg-white/3 p-5">
-                <div className="mb-4 flex items-center gap-2"><FolderOpen className="size-4 text-primary" /><h2 className="text-sm font-semibold">Workspace</h2></div>
-                <div className="flex gap-2">
-                  <Input value={workspaceRoot} onChange={(event) => setWorkspaceRoot(event.target.value)} placeholder="Workspace folder" />
-                  <Button variant="outline" onClick={async () => { const dir = await window.cozy.pickWorkspace(); if (dir) setWorkspaceRoot(dir); }}>Choose…</Button>
-                </div>
+              <section className="border-y border-border/70">
+                <SettingRow title={workspaceTitle} description="New chats start in this folder.">
+                  <div className="flex w-120 max-w-[45vw] gap-2">
+                    <Input
+                      value={workspaceRoot}
+                      onChange={(event) => {
+                        setWorkspaceRoot(event.target.value);
+                        setSaved(false);
+                      }}
+                      placeholder="Workspace folder"
+                    />
+                    <Button variant="outline" onClick={async () => { const dir = await window.cozy.pickWorkspace(); if (dir) { setWorkspaceRoot(dir); setSaved(false); } }}>Choose</Button>
+                  </div>
+                </SettingRow>
               </section>
             ) : section === "appearance" ? (
-              <section className="rounded-2xl border border-border/70 bg-white/3 p-5">
-                <div className="mb-4 flex items-center gap-2"><Palette className="size-4 text-primary" /><h2 className="text-sm font-semibold">Model Picker</h2></div>
-                <label className="flex cursor-pointer items-center gap-3">
+              <section className="border-y border-border/70">
+                <SettingRow title="Context window sizes" description="Show each model's available context window in the picker.">
                   <button
                     type="button"
                     role="switch"
                     aria-checked={showContextSize}
-                    onClick={() => setShowContextSize((v) => !v)}
+                    onClick={() => {
+                      setShowContextSize((value) => !value);
+                      setSaved(false);
+                    }}
                     className={cn(
                       "relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors",
                       showContextSize ? "bg-primary" : "bg-white/10",
@@ -107,20 +126,21 @@ export function SettingsPage() {
                   >
                     <span className={cn("pointer-events-none block size-4 rounded-full bg-white shadow transition-transform", showContextSize ? "translate-x-4" : "translate-x-0")} />
                   </button>
-                  <span className="text-sm">Show context window sizes</span>
-                </label>
+                </SettingRow>
               </section>
             ) : (
-              <section className="rounded-2xl border border-border/70 bg-white/3 p-5 text-sm text-muted-foreground">These settings are coming soon.</section>
+              <p className="text-sm text-muted-foreground">These settings are coming soon.</p>
             )}
             {error && <p className="mt-4 text-sm text-destructive">{error}</p>}
-            <div className="mt-6 flex justify-end gap-2">
-              {configured && <Button variant="ghost" onClick={() => useApp.getState().closeSettings()}>Cancel</Button>}
-              <Button onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}{!saving && <Check className="size-4" />}</Button>
-            </div>
+            {canSave && (
+              <div className="mt-6 flex items-center justify-end gap-3">
+                {saved && <span className="text-sm text-muted-foreground">Saved</span>}
+                <Button onClick={save} disabled={saving}>{saving ? "Saving…" : "Save changes"}{!saving && <Check className="size-4" />}</Button>
+              </div>
+            )}
           </div>
-        </main>
-      </div>
+        </div>
+      </main>
     </div>
   );
 }

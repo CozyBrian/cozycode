@@ -38,6 +38,8 @@ function IconButton({
 
 export function TitleControls() {
   const sidebarOpen = useApp((s) => s.sidebarOpen);
+  const settingsOpen = useApp((s) => s.settingsOpen);
+  const settingsConfigured = useApp((s) => Boolean(s.settings?.workspaceRoot && s.providers?.connected.length));
   const toggleSidebar = useApp((s) => s.toggleSidebar);
   const subagentHistoryIndex = useApp((s) => s.subagentHistoryIndex);
   const subagentHistory = useApp((s) => s.subagentHistory);
@@ -54,14 +56,14 @@ export function TitleControls() {
       <IconButton
         label="Back  ⌘["
         onClick={navigateBack}
-        disabled={subagentHistoryIndex === 0 && sessionHistoryIndex <= 0}
+        disabled={(settingsOpen && !settingsConfigured) || (!settingsOpen && subagentHistoryIndex === 0 && sessionHistoryIndex <= 0)}
       >
         <ChevronLeft className="size-4" />
       </IconButton>
       <IconButton
         label="Forward  ⌘]"
         onClick={navigateForward}
-        disabled={subagentHistoryIndex === subagentHistory.length - 1 && sessionHistoryIndex === sessionHistory.length - 1}
+        disabled={settingsOpen || (subagentHistoryIndex === subagentHistory.length - 1 && sessionHistoryIndex === sessionHistory.length - 1)}
       >
         <ChevronRight className="size-4" />
       </IconButton>

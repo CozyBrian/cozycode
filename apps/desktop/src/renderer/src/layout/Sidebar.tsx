@@ -1,11 +1,12 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import { FolderClosed, FolderOpen, Search as SearchIcon, SquarePen, Trash2 } from "lucide-react";
+import { ArrowLeft, FolderClosed, FolderOpen, Search as SearchIcon, SquarePen, Trash2 } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useApp } from "../store/app-store";
+import { useApp, type SettingsSection } from "../store/app-store";
 import type { SessionMeta } from "../../../shared/ipc.ts";
 import { SidebarSessionRow } from "./SidebarSessionRow";
 import { SidebarFooter } from "./SidebarFooter";
 import { TitleBar } from "./TitleBar";
+import { SETTINGS_SECTIONS } from "../components/settings/sections";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -42,15 +43,54 @@ function projectName(root: string): string {
   return parts[parts.length - 1] || root;
 }
 
+function SettingsSidebarView({
+  section,
+  onSelect,
+  onBack,
+  canLeave,
+}: {
+  section: SettingsSection;
+  onSelect: (section: (typeof SETTINGS_SECTIONS)[number]["id"]) => void;
+  onBack: () => void;
+  canLeave: boolean;
+}) {
+  return (
+    <div className="flex h-full flex-col px-3 pt-2">
+      <div className="px-2 pb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Settings</div>
+      <nav className="app-drag flex flex-col gap-0.5">
+        {canLeave && <ActionRow icon={<ArrowLeft />} label="Chats" onClick={onBack} />}
+        {canLeave && <div className="my-1 border-t border-sidebar-border" />}
+        {SETTINGS_SECTIONS.map((item) => {
+          const Icon = item.icon;
+          return (
+            <ActionRow
+              key={item.id}
+              icon={<Icon />}
+              label={item.label}
+              active={item.id === section}
+              onClick={() => onSelect(item.id)}
+            />
+          );
+        })}
+      </nav>
+    </div>
+  );
+}
+
 export function Sidebar() {
   const open = useApp((s) => s.sidebarOpen);
   const width = useApp((s) => s.sidebarWidth);
   const setWidth = useApp((s) => s.setSidebarWidth);
   const sessions = useApp((s) => s.sessions);
   const settings = useApp((s) => s.settings);
+  const providers = useApp((s) => s.providers);
   const createSession = useApp((s) => s.createSession);
   const openWorkspace = useApp((s) => s.openWorkspace);
   const removeWorkspace = useApp((s) => s.removeWorkspace);
+  const settingsOpen = useApp((s) => s.settingsOpen);
+  const settingsSection = useApp((s) => s.settingsSection);
+  const closeSettings = useApp((s) => s.closeSettings);
+  const shouldReduceMotion = useReducedMotion();
   const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState("");
   const [collapsedRoots, setCollapsedRoots] = useState<Set<string>>(() => new Set());
@@ -93,6 +133,7 @@ export function Sidebar() {
   }, [sessions]);
 
   const openRoots = settings?.openWorkspaceRoots ?? (settings?.workspaceRoot ? [settings.workspaceRoot] : []);
+  const canLeaveSettings = Boolean(settings?.workspaceRoot && providers?.connected.length);
   const projects = openRoots.map((root) => ({ root, sessions: projectSessions.get(root) ?? [] }));
   const otherProjects = [...projectSessions.entries()]
     .filter(([root]) => !openRoots.includes(root))
@@ -140,6 +181,104 @@ export function Sidebar() {
     [width, setWidth],
   );
 
+  const sessionsView = (
+    <div className="flex h-full flex-col">
+      <nav className="app-drag flex flex-col gap-0.5 px-3 pt-1 pb-1">
+        <ActionRow
+          icon={<SquarePen />}
+          label="New chat"
+          onClick={() => void createSession()}
+        />
+        <ActionRow icon={<FolderOpen />} label="Open project" onClick={() => void openWorkspace()} />
+        <ActionRow
+          icon={<SearchIcon />}
+          label="Search"
+          active={searching}
+          onClick={() => setSearching((v) => !v)}
+        />
+      </nav>
+
+      {searching && (
+        <div className="app-no-drag px-3 pb-2">
+          <input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search chats…"
+            className="w-full rounded-lg bg-white/6 px-2.5 py-1.5 text-sm outline-none ring-1 ring-transparent focus:ring-ring"
+          />
+        </div>
+      )}
+
+      <div className="mt-3 min-h-0 flex-1 overflow-y-auto px-3 pb-2">
+        {projects.map((project) => {
+          const collapsed = collapsedRoots.has(project.root);
+          return (
+            <ProjectGroup
+              key={project.root}
+              root={project.root}
+              sessions={project.sessions}
+              now={now}
+              collapsed={collapsed}
+              canRemove={openRoots.length > 1}
+              onToggle={() => toggleProject(project.root)}
+              onRemove={() => requestRemoveProject(project.root, projectSessionCounts.get(project.root) ?? 0)}
+            />
+          );
+        })}
+
+        {otherProjects.length > 0 && (
+          <div className="mt-4">
+            <div className="px-2 pb-1 text-xs font-medium text-muted-foreground">Other projects</div>
+            {otherProjects.map((project) => {
+              const collapsed = collapsedRoots.has(project.root);
+              return (
+                <ProjectGroup
+                  key={project.root}
+                  root={project.root}
+                  sessions={project.sessions}
+                  now={now}
+                  collapsed={collapsed}
+                  canRemove={false}
+                  onToggle={() => toggleProject(project.root)}
+                  onRemove={() => {}}
+                />
+              );
+            })}
+          </div>
+        )}
+
+        {chats.length > 0 && (
+          <div className="mt-3">
+            <div className="px-2 pb-1 text-xs font-medium text-muted-foreground">Chats</div>
+            <div className="flex flex-col gap-0.5">
+              {chats.map((s) => (
+                <SidebarSessionRow key={s.id} session={s} now={now} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {filtered.length === 0 && (
+          <div className="px-2 py-6 text-center text-sm text-muted-foreground">
+            {query ? "No matching chats" : "No chats yet"}
+          </div>
+        )}
+      </div>
+
+      <SidebarFooter />
+    </div>
+  );
+
+  const settingsView = (
+    <SettingsSidebarView
+      section={settingsSection}
+      onSelect={(section) => useApp.setState({ settingsSection: section })}
+      onBack={closeSettings}
+      canLeave={canLeaveSettings}
+    />
+  );
+
   return (
     <aside
       ref={asideRef}
@@ -148,93 +287,44 @@ export function Sidebar() {
     >
       <div className="flex h-full flex-col" style={{ width }}>
         <TitleBar />
-
-        {/* Top actions */}
-        <nav className="app-drag flex flex-col gap-0.5 px-3 pt-1 pb-1">
-          <ActionRow
-            icon={<SquarePen />}
-            label="New chat"
-            onClick={() => void createSession()}
-          />
-          <ActionRow icon={<FolderOpen />} label="Open project" onClick={() => void openWorkspace()} />
-          <ActionRow
-            icon={<SearchIcon />}
-            label="Search"
-            active={searching}
-            onClick={() => setSearching((v) => !v)}
-          />
-        </nav>
-
-        {searching && (
-          <div className="app-no-drag px-3 pb-2">
-            <input
-              autoFocus
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search chats…"
-              className="w-full rounded-lg bg-white/6 px-2.5 py-1.5 text-sm outline-none ring-1 ring-transparent focus:ring-ring"
-            />
-          </div>
-        )}
-
-        {/* Scrollable session list */}
-        <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-2 mt-3">
-          {projects.map((project) => {
-            const collapsed = collapsedRoots.has(project.root);
-            return (
-              <ProjectGroup
-                key={project.root}
-                root={project.root}
-                sessions={project.sessions}
-                now={now}
-                collapsed={collapsed}
-                canRemove={openRoots.length > 1}
-                onToggle={() => toggleProject(project.root)}
-                onRemove={() => requestRemoveProject(project.root, projectSessionCounts.get(project.root) ?? 0)}
-              />
-            );
-          })}
-
-          {otherProjects.length > 0 && (
-            <div className="mt-4">
-              <div className="px-2 pb-1 text-xs font-medium text-muted-foreground">Other projects</div>
-              {otherProjects.map((project) => {
-                const collapsed = collapsedRoots.has(project.root);
-                return (
-                  <ProjectGroup
-                    key={project.root}
-                    root={project.root}
-                    sessions={project.sessions}
-                    now={now}
-                    collapsed={collapsed}
-                    canRemove={false}
-                    onToggle={() => toggleProject(project.root)}
-                    onRemove={() => {}}
-                  />
-                );
-              })}
-            </div>
-          )}
-
-          {chats.length > 0 && (
-            <div className="mt-3">
-              <div className="px-2 pb-1 text-xs font-medium text-muted-foreground">Chats</div>
-              <div className="flex flex-col gap-0.5">
-                {chats.map((s) => (
-                  <SidebarSessionRow key={s.id} session={s} now={now} />
-                ))}
+        <div className="relative min-h-0 flex-1 overflow-hidden">
+          {shouldReduceMotion ? (
+            <>
+              <motion.div
+                className="absolute inset-0"
+                animate={{ opacity: settingsOpen ? 0 : 1 }}
+                transition={{ duration: 0.12, ease: [0.23, 1, 0.32, 1] }}
+                aria-hidden={settingsOpen}
+                inert={settingsOpen}
+              >
+                {sessionsView}
+              </motion.div>
+              <motion.div
+                className="absolute inset-0"
+                animate={{ opacity: settingsOpen ? 1 : 0 }}
+                transition={{ duration: 0.12, ease: [0.23, 1, 0.32, 1] }}
+                aria-hidden={!settingsOpen}
+                inert={!settingsOpen}
+              >
+                {settingsView}
+              </motion.div>
+            </>
+          ) : (
+            <motion.div
+              initial={false}
+              className="flex h-full w-[200%] will-change-transform"
+              animate={{ transform: settingsOpen ? "translateX(-50%)" : "translateX(0)" }}
+              transition={{ type: "spring", duration: 0.38, bounce: 0.1 }}
+            >
+              <div className="h-full w-1/2" aria-hidden={settingsOpen} inert={settingsOpen}>
+                {sessionsView}
               </div>
-            </div>
-          )}
-
-          {filtered.length === 0 && (
-            <div className="px-2 py-6 text-center text-sm text-muted-foreground">
-              {query ? "No matching chats" : "No chats yet"}
-            </div>
+              <div className="h-full w-1/2" aria-hidden={!settingsOpen} inert={!settingsOpen}>
+                {settingsView}
+              </div>
+            </motion.div>
           )}
         </div>
-
-        <SidebarFooter />
       </div>
       <Dialog open={Boolean(projectPendingRemoval)} onOpenChange={(open) => !open && setProjectPendingRemoval(null)}>
         <DialogContent showCloseButton={false}>
