@@ -41,11 +41,13 @@ export function App() {
       useApp.setState({ providers }),
     );
     const offExit = window.cozy.term.onExit((p) => useApp.getState().closeTerm(p.termId));
+    const offGit = window.cozy.git.onChanged((status) => useApp.getState().setGitStatus(status));
     return () => {
       offEvent();
       offSessions();
       offProviders();
       offExit();
+      offGit();
     };
   }, []);
 

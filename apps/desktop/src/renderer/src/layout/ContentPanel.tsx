@@ -1,5 +1,46 @@
 import { useCallback, useRef } from "react";
-import { useApp } from "../store/app-store";
+import { FileDiff, GitBranch, LayoutDashboard } from "lucide-react";
+import { useApp, type ContentPanelTab } from "../store/app-store";
+import { OverviewPane } from "../content/OverviewPane";
+import { DiffsPane } from "../content/DiffsPane";
+import { GitPane } from "../content/GitPane";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
+
+const TABS: { id: ContentPanelTab; label: string; icon: React.ReactNode }[] = [
+  { id: "overview", label: "Overview", icon: <LayoutDashboard className="size-4" /> },
+  { id: "diffs", label: "Diffs", icon: <FileDiff className="size-4" /> },
+  { id: "git", label: "Git", icon: <GitBranch className="size-4" /> },
+];
+
+function TabButton({ id, label, icon }: { id: ContentPanelTab; label: string; icon: React.ReactNode }) {
+  const active = useApp((s) => s.contentPanelTab === id);
+  const setTab = useApp((s) => s.setContentPanelTab);
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={() => setTab(id)}
+          className={cn(
+            "app-no-drag flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-white/8 hover:text-foreground",
+            active && "bg-white/10 text-foreground",
+          )}
+        >
+          {icon}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function PaneBody() {
+  const tab = useApp((s) => s.contentPanelTab);
+  if (tab === "diffs") return <DiffsPane />;
+  if (tab === "git") return <GitPane />;
+  return <OverviewPane />;
+}
 
 export function ContentPanel() {
   const open = useApp((s) => s.contentPanelOpen);
@@ -38,8 +79,13 @@ export function ContentPanel() {
       style={{ maxWidth: open ? `${width}px` : "0px" }}
     >
       <div className="flex h-full flex-col" style={{ width }}>
-        <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-          No content
+        <header className="app-drag flex h-12 shrink-0 items-center gap-1 border-b border-border/60 px-3">
+          {TABS.map((t) => (
+            <TabButton key={t.id} {...t} />
+          ))}
+        </header>
+        <div className="min-h-0 flex-1 overflow-auto">
+          <PaneBody />
         </div>
       </div>
       {/* Resize handle */}

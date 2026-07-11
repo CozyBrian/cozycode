@@ -3,6 +3,7 @@ import type { ModelRef, ProviderInfo } from "@cozycode/protocol";
 import { useApp } from "../store/app-store";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { compactTokens } from "@/lib/format";
 import {
   Command,
   CommandEmpty,
@@ -14,12 +15,7 @@ import {
 } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
-function contextWindow(value?: number): string | undefined {
-  if (!value) return undefined;
-  if (value >= 1_000_000) return `${Math.round(value / 100_000) / 10}m`;
-  if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
-  return String(value);
-}
+const contextWindow = compactTokens;
 
 function same(a: ModelRef | null, b: ModelRef): boolean {
   return a?.providerID === b.providerID && a.modelID === b.modelID;

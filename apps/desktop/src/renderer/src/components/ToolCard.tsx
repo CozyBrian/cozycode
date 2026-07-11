@@ -1,4 +1,4 @@
-import { Check, ChevronRight, CircleAlert, Copy, LoaderCircle, Terminal } from "lucide-react";
+import { Check, ChevronRight, CircleAlert, Copy, LoaderCircle, PanelRight, Terminal } from "lucide-react";
 import { useId, useState } from "react";
 import type { ToolItem } from "./tool-presentation.ts";
 import {
@@ -224,6 +224,7 @@ function ShellTool({ item }: { item: ToolItem }) {
 function FileChangeTool({ item }: { item: ToolItem }) {
   const [open, setOpen] = useState(false);
   const id = useId();
+  const showDiff = useApp((s) => s.showDiff);
   const patch = diffPayload(item);
   if (!patch) return <InlineTool item={item} />;
   const fileCount = Array.isArray(record(item.result)?.files)
@@ -243,6 +244,24 @@ function FileChangeTool({ item }: { item: ToolItem }) {
         <span className="font-medium text-muted-foreground">{action}</span>
         <span className="truncate font-mono text-xs text-muted-foreground">{path}</span>
         <span className="ml-auto shrink-0 font-mono text-xs"><span className="text-emerald-400">+{counts.additions}</span> <span className="text-destructive">-{counts.deletions}</span></span>
+        <span
+          role="button"
+          tabIndex={0}
+          title="Open in Diffs panel"
+          onClick={(e) => {
+            e.stopPropagation();
+            showDiff({ path, patch, source: "chat" });
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.stopPropagation();
+              showDiff({ path, patch, source: "chat" });
+            }
+          }}
+          className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+        >
+          <PanelRight className="size-3.5" />
+        </span>
         <ChevronRight className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
       </button>
       {open ? <div id={id} className="selectable border-t border-border/60 bg-background/20"><ToolDiff path={path} patch={patch} /></div> : null}

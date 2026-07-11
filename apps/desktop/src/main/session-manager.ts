@@ -22,6 +22,7 @@ import type { SettingsStore } from "./settings.ts";
 import type { ProviderBridge } from "./providers.ts";
 import { SessionStore } from "./session-store.ts";
 import { TerminalManager } from "./terminal-manager.ts";
+import { GitManager } from "./git-manager.ts";
 import { resolvePreset } from "./presets.ts";
 
 /**
@@ -37,6 +38,7 @@ export class SessionManager {
   private configKey = "";
   private readonly store: SessionStore;
   readonly terminals: TerminalManager;
+  readonly git: GitManager;
 
   constructor(
     private readonly web: WebContents,
@@ -45,6 +47,7 @@ export class SessionManager {
   ) {
     this.store = new SessionStore(settings.legacyProviderID);
     this.terminals = new TerminalManager(web);
+    this.git = new GitManager(web);
   }
 
   // --- provider config ------------------------------------------------------
@@ -150,6 +153,7 @@ export class SessionManager {
     this.session = null;
     this.configKey = "";
     this.terminals.setCwd(meta.workspaceRoot);
+    this.git.setCwd(meta.workspaceRoot);
     this.notifyChanged();
     return { meta, records: [] };
   }
@@ -162,6 +166,7 @@ export class SessionManager {
     this.session = null;
     this.configKey = "";
     this.terminals.setCwd(meta.workspaceRoot);
+    this.git.setCwd(meta.workspaceRoot);
     const records = await this.store.readRecords(id);
     return { meta, records };
   }
@@ -316,6 +321,7 @@ export class SessionManager {
 
   async dispose(): Promise<void> {
     this.terminals.dispose();
+    this.git.dispose();
     await this.teardownActive();
     await this.store.dispose();
   }

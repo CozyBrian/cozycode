@@ -7,13 +7,31 @@ import type {
   ProviderList,
   QuestionRequest,
   SessionEvent,
+  TokenUsage,
 } from "@cozycode/protocol";
 import type {
   AppSettings,
+  GitStatus,
   PermissionPreset,
   SessionMeta,
   SessionRecord,
 } from "../../../shared/ipc.ts";
+
+export type ContentPanelTab = "overview" | "diffs" | "git";
+
+/** A file diff pinned into the Diffs pane (from a chat card or the Git pane). */
+export interface SelectedDiff {
+  path: string;
+  patch: string;
+  source: "chat" | "git";
+}
+
+/** Running token totals for the active session. */
+export interface SessionUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
 import { effortsForModel, modelKey, resolveEffort } from "@cozycode/commands";
 import { foldEvent, userItem, type TranscriptItem } from "../transcript.ts";
 import { emptySessionForWorkspace, workspaceRoots } from "../../../shared/workspaces.ts";
@@ -35,6 +53,7 @@ export interface AppState {
   terminalHeight: number;
   contentPanelOpen: boolean;
   contentPanelWidth: number;
+  contentPanelTab: ContentPanelTab;
   settingsOpen: boolean;
   settingsSection: SettingsSection;
   helpOpen: boolean;
@@ -53,6 +72,10 @@ export interface AppState {
   // active chat
   items: TranscriptItem[];
   busy: boolean;
+  /** Usage from the most recent finished turn (for the context meter). */
+  turnUsage: TokenUsage | null;
+  /** Accumulated usage across the active session's turns. */
+  sessionUsage: SessionUsage;
   preset: PermissionPreset;
   model: ModelRef | null;
   /** Reasoning effort for the current model (undefined = provider default). */
@@ -69,6 +92,12 @@ export interface AppState {
   termTabs: TermTab[];
   activeTermId: string | null;
 
+  // content panel
+  /** File pinned into the Diffs pane; null → empty pane. */
+  selectedDiff: SelectedDiff | null;
+  /** Latest git status of the active workspace; null → not fetched yet. */
+  gitStatus: GitStatus | null;
+
   // --- actions ---
   bootstrap(): Promise<void>;
   applyEvent(event: SessionEvent): void;
@@ -77,8 +106,16 @@ export interface AppState {
   setSidebarWidth(px: number): void;
   toggleTerminal(): void;
   toggleContentPanel(): void;
+  setContentPanelTab(tab: ContentPanelTab): void;
+  /** Open the panel, optionally switching to a tab. */
+  openContentPanel(tab?: ContentPanelTab): void;
   setTerminalHeight(px: number): void;
   setContentPanelWidth(px: number): void;
+  /** Pin a file's diff into the Diffs pane and reveal it. */
+  showDiff(diff: SelectedDiff): void;
+  setGitStatus(status: GitStatus): void;
+  /** Fetch git status once (initial populate; the watcher keeps it live). */
+  refreshGit(): Promise<void>;
   openSettings(section?: SettingsSection): void;
   closeSettings(): void;
   setHelpOpen(open: boolean): void;
@@ -149,6 +186,40 @@ function replayRecords(records: SessionRecord[]): TranscriptItem[] {
   return items;
 }
 
+const EMPTY_USAGE: SessionUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+
+/** Fold a turn's usage into a running total (missing fields count as zero). */
+function addUsage(total: SessionUsage, usage: TokenUsage | undefined): SessionUsage {
+  if (!usage) return total;
+  return {
+    inputTokens: total.inputTokens + (usage.inputTokens ?? 0),
+    outputTokens: total.outputTokens + (usage.outputTokens ?? 0),
+    totalTokens: total.totalTokens + (usage.totalTokens ?? 0),
+  };
+}
+
+/**
+ * Seed the running total + last-turn usage from a session's persisted records.
+ * Subagent finish usage (wrapped in `subagent-event`) is folded into the
+ * session total too, but never into `turnUsage` — the context meter tracks only
+ * the parent session's own window.
+ */
+function sumUsage(records: SessionRecord[]): { sessionUsage: SessionUsage; turnUsage: TokenUsage | null } {
+  let sessionUsage = EMPTY_USAGE;
+  let turnUsage: TokenUsage | null = null;
+  for (const rec of records) {
+    if (rec.kind !== "event") continue;
+    const event = rec.event;
+    if (event.type === "finish" && event.usage) {
+      sessionUsage = addUsage(sessionUsage, event.usage);
+      turnUsage = event.usage;
+    } else if (event.type === "subagent-event" && event.event.type === "finish") {
+      sessionUsage = addUsage(sessionUsage, event.event.usage);
+    }
+  }
+  return { sessionUsage, turnUsage };
+}
+
 export const useApp = create<AppState>((set, get) => ({
   settings: null,
   loaded: false,
@@ -159,6 +230,7 @@ export const useApp = create<AppState>((set, get) => ({
   terminalHeight: 260,
   contentPanelOpen: false,
   contentPanelWidth: 320,
+  contentPanelTab: "overview",
   settingsOpen: false,
   settingsSection: "general",
   helpOpen: false,
@@ -173,6 +245,8 @@ export const useApp = create<AppState>((set, get) => ({
 
   items: [],
   busy: false,
+  turnUsage: null,
+  sessionUsage: EMPTY_USAGE,
   preset: "ask",
   model: null,
   effort: undefined,
@@ -184,6 +258,9 @@ export const useApp = create<AppState>((set, get) => ({
 
   termTabs: [],
   activeTermId: null,
+
+  selectedDiff: null,
+  gitStatus: null,
 
   async bootstrap() {
     const settings = await window.cozy.getSettings();
@@ -207,6 +284,7 @@ export const useApp = create<AppState>((set, get) => ({
       set({
         activeId: snap.meta.id,
         items: replayRecords(snap.records),
+        ...sumUsage(snap.records),
         preset: snap.meta.preset,
         model: snap.meta.model,
         effort: storedEffort(get(), snap.meta.model),
@@ -236,15 +314,48 @@ export const useApp = create<AppState>((set, get) => ({
       set((s) => ({ questionQueue: s.questionQueue.filter((r) => r.id !== event.requestId) }));
     }
     if (event.type === "effort-change") set({ effort: event.effort });
-    if (event.type === "finish" || event.type === "error") set({ busy: false });
+    if (event.type === "finish") {
+      set((s) => ({
+        busy: false,
+        turnUsage: event.usage ?? s.turnUsage,
+        sessionUsage: addUsage(s.sessionUsage, event.usage),
+      }));
+    }
+    // Subagent turns bill into the session total (not the parent's context meter).
+    if (event.type === "subagent-event" && event.event.type === "finish") {
+      const usage = event.event.usage;
+      if (usage) set((s) => ({ sessionUsage: addUsage(s.sessionUsage, usage) }));
+    }
+    if (event.type === "error") set({ busy: false });
   },
 
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   setSidebarWidth: (px) => set({ sidebarWidth: Math.max(200, Math.min(450, px)) }),
   toggleTerminal: () => set((s) => ({ terminalOpen: !s.terminalOpen })),
-  toggleContentPanel: () => set((s) => ({ contentPanelOpen: !s.contentPanelOpen })),
+  toggleContentPanel: () => {
+    const next = !get().contentPanelOpen;
+    set({ contentPanelOpen: next });
+    if (next && get().contentPanelTab === "git") void get().refreshGit();
+  },
+  setContentPanelTab: (tab) => {
+    set({ contentPanelTab: tab });
+    if (tab === "git") void get().refreshGit();
+  },
+  openContentPanel: (tab) => {
+    set((s) => ({ contentPanelOpen: true, contentPanelTab: tab ?? s.contentPanelTab }));
+    if ((tab ?? get().contentPanelTab) === "git") void get().refreshGit();
+  },
   setTerminalHeight: (px) => set({ terminalHeight: Math.max(120, Math.min(600, px)) }),
   setContentPanelWidth: (px) => set({ contentPanelWidth: Math.max(200, Math.min(600, px)) }),
+  showDiff: (diff) => set({ selectedDiff: diff, contentPanelTab: "diffs", contentPanelOpen: true }),
+  setGitStatus: (status) => set({ gitStatus: status }),
+  async refreshGit() {
+    try {
+      set({ gitStatus: await window.cozy.git.status() });
+    } catch {
+      // Non-fatal; the pane keeps its last snapshot.
+    }
+  },
   openSettings: (section = "general") => set({ settingsOpen: true, settingsSection: section }),
   closeSettings: () => set({ settingsOpen: false }),
   setHelpOpen: (open) => set({ helpOpen: open }),
@@ -319,6 +430,7 @@ export const useApp = create<AppState>((set, get) => ({
     set({
       activeId: snap.meta.id,
       items: replayRecords(snap.records),
+      ...sumUsage(snap.records),
       preset: snap.meta.preset,
       model: snap.meta.model,
       effort: storedEffort(get(), snap.meta.model),
@@ -340,6 +452,7 @@ export const useApp = create<AppState>((set, get) => ({
     set({
       activeId: snap.meta.id,
       items: replayRecords(snap.records),
+      ...sumUsage(snap.records),
       preset: snap.meta.preset,
       model: snap.meta.model,
       effort: storedEffort(get(), snap.meta.model),
@@ -360,6 +473,7 @@ export const useApp = create<AppState>((set, get) => ({
       set({
         activeId: snap.meta.id,
         items: replayRecords(snap.records),
+        ...sumUsage(snap.records),
         preset: snap.meta.preset,
         model: snap.meta.model,
         effort: storedEffort(get(), snap.meta.model),

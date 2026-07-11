@@ -11,6 +11,7 @@ import {
   IPC,
   type AppSettingsInput,
   type CozyApi,
+  type GitStatus,
   type PermissionPreset,
   type SessionMeta,
   type TermData,
@@ -76,6 +77,16 @@ const api: CozyApi = {
       const listener = (_e: IpcRendererEvent, payload: TermExit) => cb(payload);
       ipcRenderer.on(IPC.termExit, listener);
       return () => ipcRenderer.off(IPC.termExit, listener);
+    },
+  },
+
+  git: {
+    status: () => ipcRenderer.invoke(IPC.gitStatus),
+    diff: (path: string, staged: boolean) => ipcRenderer.invoke(IPC.gitDiff, { path, staged }),
+    onChanged(cb: (status: GitStatus) => void) {
+      const listener = (_e: IpcRendererEvent, status: GitStatus) => cb(status);
+      ipcRenderer.on(IPC.gitChanged, listener);
+      return () => ipcRenderer.off(IPC.gitChanged, listener);
     },
   },
 

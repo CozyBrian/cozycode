@@ -154,6 +154,12 @@ function registerIpc(): void {
       manager?.terminals.resize(payload.termId, payload.cols, payload.rows),
   );
   ipcMain.handle(IPC.termKill, (_e, termId: string) => manager?.terminals.kill(termId));
+
+  // git (read-only)
+  ipcMain.handle(IPC.gitStatus, () => manager?.git.status());
+  ipcMain.handle(IPC.gitDiff, (_e, payload: { path: string; staged: boolean }) =>
+    manager?.git.diff(payload.path, payload.staged),
+  );
 }
 
 app.whenReady().then(async () => {

@@ -87,6 +87,28 @@ export interface TermExit {
   exitCode: number;
 }
 
+/** One changed path in the active workspace's git working tree. */
+export interface GitFileStatus {
+  /** Repo-relative path (for renames, the current path). */
+  path: string;
+  status: "modified" | "added" | "deleted" | "renamed" | "untracked" | "conflicted";
+  /** Has changes in the index (staged). */
+  staged: boolean;
+  /** Has changes in the working tree (unstaged / untracked). */
+  unstaged: boolean;
+  additions: number;
+  deletions: number;
+}
+
+/** Snapshot of the active workspace's git status. */
+export interface GitStatus {
+  isRepo: boolean;
+  branch: string | null;
+  ahead: number;
+  behind: number;
+  files: GitFileStatus[];
+}
+
 /** IPC channel names, centralized so main/preload/renderer agree. */
 export const IPC = {
   settingsGet: "settings:get",
@@ -121,12 +143,16 @@ export const IPC = {
   termInput: "term:input",
   termResize: "term:resize",
   termKill: "term:kill",
+  // git
+  gitStatus: "git:status",
+  gitDiff: "git:diff",
   // main -> renderer (push)
   sessionEvent: "session:event",
   sessionsChanged: "sessions:changed",
   providersChanged: "providers:changed",
   termData: "term:data",
   termExit: "term:exit",
+  gitChanged: "git:changed",
 } as const;
 
 /** The typed API exposed on `window.cozy` by the preload script. */
@@ -175,6 +201,14 @@ export interface CozyApi {
     kill(termId: string): Promise<void>;
     onData(cb: (payload: TermData) => void): () => void;
     onExit(cb: (payload: TermExit) => void): () => void;
+  };
+
+  // git (read-only view of the active workspace)
+  git: {
+    status(): Promise<GitStatus>;
+    /** Unified diff for one path; `staged` selects the index vs working-tree diff. */
+    diff(path: string, staged: boolean): Promise<string>;
+    onChanged(cb: (status: GitStatus) => void): () => void;
   };
 
   // push streams (permission-asked / permission-replied arrive via onEvent)
