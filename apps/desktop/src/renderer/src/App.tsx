@@ -1,8 +1,8 @@
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { preloadHighlighter } from "@pierre/diffs";
+import { cycleEffort, effortsForModel } from "@cozycode/commands";
 import { useApp } from "./store/app-store";
-import { useGlobalShortcuts } from "./lib/shortcuts";
 import { AppLayout } from "./layout/AppLayout";
 import { PermissionModal } from "./components/PermissionModal";
 import { QuestionModal } from "./components/QuestionModal";
@@ -22,14 +22,68 @@ export function App() {
   const replyPermission = useApp((s) => s.replyPermission);
   const answerQuestion = useApp((s) => s.answerQuestion);
   const rejectQuestion = useApp((s) => s.rejectQuestion);
-
-  useGlobalShortcuts();
+  const dockBadgeCount = permissionQueue.length + questionQueue.length;
 
   // Bootstrap settings + active session once.
   useEffect(() => {
     void useApp.getState().bootstrap();
     void preloadHighlighter({ themes: ["pierre-dark"], langs: ["text"] });
   }, []);
+
+  useEffect(() => {
+    if (!loaded) return;
+    return window.cozy.onNativeCommand((command) => {
+      const state = useApp.getState();
+      switch (command) {
+        case "new-chat":
+          void state.createSession();
+          break;
+        case "open-project":
+          void state.openWorkspace();
+          break;
+        case "export-current-session":
+          if (state.activeId) void state.exportSession(state.activeId);
+          break;
+        case "open-settings":
+          state.openSettings();
+          break;
+        case "toggle-sidebar":
+          state.toggleSidebar();
+          break;
+        case "toggle-terminal":
+          state.toggleTerminal();
+          break;
+        case "toggle-content-panel":
+          state.toggleContentPanel();
+          break;
+        case "cycle-effort": {
+          const efforts = effortsForModel(
+            state.providers ?? { all: [], connected: [] },
+            state.model,
+          );
+          if (efforts.length) state.setEffort(cycleEffort(state.effort, efforts));
+          break;
+        }
+        case "navigate-back":
+          state.navigateBack();
+          break;
+        case "navigate-forward":
+          state.navigateForward();
+          break;
+        case "new-terminal":
+          void state.newTerminal();
+          break;
+        case "show-help":
+          state.setHelpOpen(true);
+          break;
+      }
+    });
+  }, [loaded]);
+
+  useEffect(() => {
+    window.cozy.setDockBadge(dockBadgeCount);
+    return () => window.cozy.setDockBadge(0);
+  }, [dockBadgeCount]);
 
   // Subscribe to the main-process push streams for the app's lifetime.
   useEffect(() => {

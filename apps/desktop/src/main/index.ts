@@ -1,30 +1,230 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  shell,
+  type MenuItemConstructorOptions,
+} from "electron";
+import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { auth, registry } from "@cozycode/core";
 import { sessionMarkdownFilename } from "@cozycode/commands";
-import type { AgentMode, CustomProviderInput, ModelRef, PermissionReplyBody, QuestionReplyBody } from "@cozycode/protocol";
-import { IPC, type AppSettingsInput, type PermissionPreset } from "../shared/ipc.ts";
+import type {
+  AgentMode,
+  CustomProviderInput,
+  ModelRef,
+  PermissionReplyBody,
+  QuestionReplyBody,
+} from "@cozycode/protocol";
+import {
+  IPC,
+  type AppSettingsInput,
+  type NativeCommand,
+  type PermissionPreset,
+} from "../shared/ipc.ts";
 import { SettingsStore } from "./settings.ts";
 import { SessionManager } from "./session-manager.ts";
 import { ProviderBridge } from "./providers.ts";
+import { loadWindowState, trackWindowState } from "./window-state.ts";
+
+const isMac = process.platform === "darwin";
+const developmentIcon = join(import.meta.dirname, "../../resources/icon.png");
+const repositoryUrl = "https://github.com/CozyBrian/cozycode";
+
+// Keep development attached to its existing archive. The packaged 0.1.0 app
+// intentionally starts fresh under the canonical CozyCode userData directory.
+if (!app.isPackaged) {
+  app.setPath("userData", join(app.getPath("appData"), "@cozycode", "desktop"));
+}
 
 const settings = new SettingsStore();
 const providers = new ProviderBridge();
+const pendingNativeCommands: NativeCommand[] = [];
+let mainWindow: BrowserWindow | null = null;
 let manager: SessionManager | null = null;
+let managerDisposal: Promise<void> = Promise.resolve();
+let closingWindow = false;
+let quitting = false;
+let resolveStartup: () => void = () => undefined;
+const startupReady = new Promise<void>((resolve) => {
+  resolveStartup = resolve;
+});
 
-const isMac = process.platform === "darwin";
+function flushNativeCommands(window: BrowserWindow): void {
+  if (window.isDestroyed() || window.webContents.isLoadingMainFrame()) return;
+  pendingNativeCommands.splice(0).forEach((command) => {
+    window.webContents.send(IPC.nativeCommand, command);
+  });
+}
+
+async function ensureWindow(): Promise<void> {
+  await app.whenReady();
+  await startupReady;
+  if (closingWindow) await managerDisposal;
+  if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+  const window = mainWindow;
+  if (!window) return;
+  if (window.isMinimized()) window.restore();
+  if (!window.webContents.isLoadingMainFrame()) window.show();
+  window.focus();
+  flushNativeCommands(window);
+}
+
+function sendNativeCommand(command: NativeCommand): void {
+  pendingNativeCommands.push(command);
+  void ensureWindow();
+}
+
+function installNativeMenus(): void {
+  const command = (value: NativeCommand) => () => sendNativeCommand(value);
+  const template: MenuItemConstructorOptions[] = [
+    {
+      label: "CozyCode",
+      submenu: [
+        { role: "about" },
+        { type: "separator" },
+        {
+          label: "Settings…",
+          accelerator: "CmdOrCtrl+,",
+          click: command("open-settings"),
+        },
+        { type: "separator" },
+        { role: "services" },
+        { type: "separator" },
+        { role: "hide" },
+        { role: "hideOthers" },
+        { role: "unhide" },
+        { type: "separator" },
+        { role: "quit" },
+      ],
+    },
+    {
+      label: "File",
+      submenu: [
+        { label: "New Chat", accelerator: "CmdOrCtrl+N", click: command("new-chat") },
+        {
+          label: "Open Project…",
+          accelerator: "CmdOrCtrl+O",
+          click: command("open-project"),
+        },
+        {
+          label: "New Terminal",
+          accelerator: "CmdOrCtrl+Shift+J",
+          click: command("new-terminal"),
+        },
+        { type: "separator" },
+        {
+          label: "Export Current Session…",
+          accelerator: "CmdOrCtrl+Shift+E",
+          click: command("export-current-session"),
+        },
+        { type: "separator" },
+        { role: "close" },
+      ],
+    },
+    {
+      label: "Edit",
+      submenu: [
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+        { role: "pasteAndMatchStyle" },
+        { role: "selectAll" },
+      ],
+    },
+    {
+      label: "View",
+      submenu: [
+        {
+          label: "Toggle Sidebar",
+          accelerator: "CmdOrCtrl+B",
+          click: command("toggle-sidebar"),
+        },
+        {
+          label: "Toggle Terminal",
+          accelerator: "CmdOrCtrl+J",
+          click: command("toggle-terminal"),
+        },
+        {
+          label: "Toggle Content Panel",
+          accelerator: "CmdOrCtrl+\\",
+          click: command("toggle-content-panel"),
+        },
+        {
+          label: "Cycle Reasoning Effort",
+          accelerator: "CmdOrCtrl+Shift+T",
+          click: command("cycle-effort"),
+        },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+      ],
+    },
+    {
+      label: "Navigate",
+      submenu: [
+        { label: "Back", accelerator: "CmdOrCtrl+[", click: command("navigate-back") },
+        {
+          label: "Forward",
+          accelerator: "CmdOrCtrl+]",
+          click: command("navigate-forward"),
+        },
+      ],
+    },
+    {
+      label: "Window",
+      submenu: [
+        { role: "minimize" },
+        { role: "zoom" },
+        { type: "separator" },
+        { role: "front" },
+      ],
+    },
+    {
+      role: "help",
+      submenu: [
+        { label: "CozyCode Help", click: command("show-help") },
+        { type: "separator" },
+        { label: "CozyCode on GitHub", click: () => void shell.openExternal(repositoryUrl) },
+      ],
+    },
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+
+  if (isMac) {
+    app.dock?.setMenu(
+      Menu.buildFromTemplate([
+        { label: "New Chat", click: command("new-chat") },
+        { label: "Open Project…", click: command("open-project") },
+        { label: "New Terminal", click: command("new-terminal") },
+        { type: "separator" },
+        { label: "Settings…", click: command("open-settings") },
+      ]),
+    );
+  }
+}
 
 function createWindow(): void {
-  const win = new BrowserWindow({
-    width: 1100,
-    height: 780,
+  if (mainWindow && !mainWindow.isDestroyed()) return;
+  const savedState = loadWindowState();
+  const window = new BrowserWindow({
+    width: savedState?.width ?? 1100,
+    height: savedState?.height ?? 780,
+    ...(savedState ? { x: savedState.x, y: savedState.y } : {}),
+    minWidth: 800,
+    minHeight: 600,
     show: false,
-    title: "cozycode",
-    // On macOS: unified title bar with inset traffic lights + whole-window
-    // vibrancy. `transparent: true` is intentionally avoided (it has known
-    // focus/repaint bugs when combined with a title-bar style); a fully
-    // transparent backgroundColor lets the vibrancy layer show through instead.
+    title: "CozyCode",
     ...(isMac
       ? {
           titleBarStyle: "hiddenInset" as const,
@@ -34,24 +234,68 @@ function createWindow(): void {
           backgroundColor: "#00000000",
         }
       : { backgroundColor: "#15171d" }),
+    ...(!app.isPackaged && existsSync(developmentIcon) ? { icon: developmentIcon } : {}),
     webPreferences: {
-      preload: join(import.meta.dirname, "../preload/index.mjs"),
-      sandbox: false,
+      preload: join(import.meta.dirname, "../preload/index.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
     },
   });
 
-  manager = new SessionManager(win.webContents, settings, providers);
+  const sessionManager = new SessionManager(window.webContents, settings, providers);
+  const saveWindowState = trackWindowState(window);
+  mainWindow = window;
+  manager = sessionManager;
 
-  win.on("ready-to-show", () => win.show());
-  win.on("closed", () => {
-    void manager?.dispose();
-    manager = null;
+  window.once("ready-to-show", () => {
+    if (savedState?.maximized && !savedState.fullscreen) window.maximize();
+    window.show();
+    if (savedState?.fullscreen) window.setFullScreen(true);
+  });
+  window.webContents.once("did-finish-load", () => flushNativeCommands(window));
+
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/.test(url)) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  window.webContents.on("will-navigate", (event, url) => {
+    if (url === window.webContents.getURL()) return;
+    event.preventDefault();
+    if (/^https?:/.test(url)) void shell.openExternal(url);
+  });
+
+  window.on("close", (event) => {
+    if (closingWindow) {
+      event.preventDefault();
+      return;
+    }
+    event.preventDefault();
+    closingWindow = true;
+    saveWindowState();
+    window.hide();
+    if (manager === sessionManager) manager = null;
+    if (isMac) app.dock?.setBadge("");
+
+    managerDisposal = sessionManager
+      .dispose()
+      .catch((error) => console.error("Failed to dispose session manager", error))
+      .then(() => {
+        if (!window.isDestroyed()) window.destroy();
+      });
+    void managerDisposal.then(() => {
+      if (quitting) app.quit();
+    });
+  });
+  window.on("closed", () => {
+    if (mainWindow === window) mainWindow = null;
+    closingWindow = false;
   });
 
   if (process.env.ELECTRON_RENDERER_URL) {
-    void win.loadURL(process.env.ELECTRON_RENDERER_URL);
+    void window.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
-    void win.loadFile(join(import.meta.dirname, "../renderer/index.html"));
+    void window.loadFile(join(import.meta.dirname, "../renderer/index.html"));
   }
 }
 
@@ -66,7 +310,6 @@ function registerIpc(): void {
     return result.canceled ? null : (result.filePaths[0] ?? null);
   });
 
-  // active-session actions
   ipcMain.handle(IPC.sessionSend, (_e, message: string) => {
     if (!manager) return { ok: false, error: "No active window." };
     return manager.send(message);
@@ -87,7 +330,6 @@ function registerIpc(): void {
     manager?.replyQuestion(body),
   );
 
-  // session management
   ipcMain.handle(IPC.sessionsList, () => manager?.list() ?? []);
   ipcMain.handle(IPC.sessionsCreate, (_e, opts: { workspaceRoot?: string | null }) =>
     manager?.create(opts ?? {}),
@@ -109,7 +351,6 @@ function registerIpc(): void {
     return result.filePath;
   });
 
-  // providers
   ipcMain.handle(IPC.providersList, () => providers.list());
   ipcMain.handle(
     IPC.providersConnectApi,
@@ -127,11 +368,15 @@ function registerIpc(): void {
     (_e, payload: { providerID: string; method: number }) =>
       providers.oauthStart(payload.providerID, payload.method),
   );
-  ipcMain.handle(IPC.providersOauthWait, (_e, payload: { providerID: string; attemptID: string }) =>
-    providers.oauthWait(payload.providerID, payload.attemptID),
+  ipcMain.handle(
+    IPC.providersOauthWait,
+    (_e, payload: { providerID: string; attemptID: string }) =>
+      providers.oauthWait(payload.providerID, payload.attemptID),
   );
-  ipcMain.handle(IPC.providersOauthCancel, (_e, payload: { providerID: string; attemptID: string }) =>
-    providers.oauthCancel(payload.providerID, payload.attemptID),
+  ipcMain.handle(
+    IPC.providersOauthCancel,
+    (_e, payload: { providerID: string; attemptID: string }) =>
+      providers.oauthCancel(payload.providerID, payload.attemptID),
   );
   ipcMain.handle(IPC.providersOpenExternal, (_e, url: string) => {
     const parsed = new URL(url);
@@ -141,7 +386,6 @@ function registerIpc(): void {
     return shell.openExternal(parsed.toString());
   });
 
-  // terminal
   ipcMain.handle(IPC.termCreate, (_e, opts: { cols: number; rows: number }) =>
     manager?.terminals.create(opts),
   );
@@ -155,22 +399,50 @@ function registerIpc(): void {
   );
   ipcMain.handle(IPC.termKill, (_e, termId: string) => manager?.terminals.kill(termId));
 
-  // git (read-only)
   ipcMain.handle(IPC.gitStatus, () => manager?.git.status());
   ipcMain.handle(IPC.gitDiff, (_e, payload: { path: string; staged: boolean }) =>
     manager?.git.diff(payload.path, payload.staged),
   );
+
+  ipcMain.on(IPC.dockBadge, (_event, value: unknown) => {
+    if (!isMac || !Number.isInteger(value) || (value as number) < 0 || (value as number) > 9999)
+      return;
+    const count = value as number;
+    app.dock?.setBadge(count ? (count > 99 ? "99+" : String(count)) : "");
+  });
 }
 
-app.whenReady().then(async () => {
-  await settings.migrateProviderCredentials(registry, auth);
-  registerIpc();
-  createWindow();
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => void ensureWindow());
+  app.on("before-quit", () => {
+    quitting = true;
   });
-});
+
+  void app.whenReady().then(async () => {
+    await settings
+      .migrateProviderCredentials(registry, auth)
+      .catch((error) => console.error("Provider credential migration failed", error));
+    registerIpc();
+    installNativeMenus();
+    app.setAboutPanelOptions({
+      applicationName: "CozyCode",
+      applicationVersion: app.getVersion(),
+      version: `Version ${app.getVersion()}`,
+      copyright: "Personal software by CozyBrian.",
+      website: repositoryUrl,
+    });
+    if (isMac && !app.isPackaged && existsSync(developmentIcon)) {
+      app.dock?.setIcon(developmentIcon);
+    }
+    createWindow();
+    resolveStartup();
+    app.on("activate", () => void ensureWindow());
+  });
+}
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
+  if (!isMac) app.quit();
 });

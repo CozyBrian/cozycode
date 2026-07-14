@@ -1,0 +1,33 @@
+appId: dev.cozybrian.cozycode
+productName: CozyCode
+artifactName: ${productName}-${version}-${arch}.${ext}
+asar: true
+asarUnpack:
+  - node_modules/@lydell/node-pty-darwin-arm64/**/*
+npmRebuild: false
+directories:
+  output: release
+  buildResources: resources
+files:
+  - out/**/*
+  - package.json
+  - node_modules/@lydell/node-pty/**/*
+  - node_modules/@lydell/node-pty-darwin-arm64/**/*
+mac:
+  category: public.app-category.developer-tools
+  icon: resources/icon.icns
+  identity: "Apple Development: kwabenanewton02@icloud.com (9Y3844DMQ7)"
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  notarize: false
+  target:
+    - target: dmg
+      arch:
+        - arm64
+    - target: zip
+      arch:
+        - arm64
+  extendInfo:
+    NSHumanReadableCopyright: Personal software by CozyBrian.
+dmg:
+  title: CozyCode ${version}

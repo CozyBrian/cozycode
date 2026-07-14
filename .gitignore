@@ -6,6 +6,10 @@ dist/
 .env.local
 out/
 build/
+release/
+apps/desktop/resources/icon.iconset/
+apps/desktop/resources/icon.icns
+apps/desktop/resources/icon.png
 *.log
 cozycode.json
 

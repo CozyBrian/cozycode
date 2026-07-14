@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { ArrowLeft, FolderClosed, FolderOpen, Search as SearchIcon, SquarePen, Trash2 } from "lucide-react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, Reorder, useReducedMotion } from "motion/react";
 import { useApp, type SettingsSection } from "../store/app-store";
 import type { SessionMeta } from "../../../shared/ipc.ts";
 import { SidebarSessionRow } from "./SidebarSessionRow";
@@ -83,12 +83,13 @@ export function Sidebar() {
   const setWidth = useApp((s) => s.setSidebarWidth);
   const sessions = useApp((s) => s.sessions);
   const settings = useApp((s) => s.settings);
-  const providers = useApp((s) => s.providers);
   const createSession = useApp((s) => s.createSession);
   const openWorkspace = useApp((s) => s.openWorkspace);
   const removeWorkspace = useApp((s) => s.removeWorkspace);
+  const reorderWorkspaces = useApp((s) => s.reorderWorkspaces);
   const settingsOpen = useApp((s) => s.settingsOpen);
   const settingsSection = useApp((s) => s.settingsSection);
+  const activeId = useApp((s) => s.activeId);
   const closeSettings = useApp((s) => s.closeSettings);
   const shouldReduceMotion = useReducedMotion();
   const [searching, setSearching] = useState(false);
@@ -133,7 +134,7 @@ export function Sidebar() {
   }, [sessions]);
 
   const openRoots = settings?.openWorkspaceRoots ?? (settings?.workspaceRoot ? [settings.workspaceRoot] : []);
-  const canLeaveSettings = Boolean(settings?.workspaceRoot && providers?.connected.length);
+  const canLeaveSettings = Boolean(activeId);
   const projects = openRoots.map((root) => ({ root, sessions: projectSessions.get(root) ?? [] }));
   const otherProjects = [...projectSessions.entries()]
     .filter(([root]) => !openRoots.includes(root))
@@ -144,6 +145,18 @@ export function Sidebar() {
       const next = new Set(current);
       if (next.has(root)) next.delete(root);
       else next.add(root);
+      return next;
+    });
+  };
+
+  const createChat = async () => {
+    const root = settings?.workspaceRoot;
+    await createSession();
+    if (!root) return;
+    setCollapsedRoots((current) => {
+      if (!current.has(root)) return current;
+      const next = new Set(current);
+      next.delete(root);
       return next;
     });
   };
@@ -187,7 +200,7 @@ export function Sidebar() {
         <ActionRow
           icon={<SquarePen />}
           label="New chat"
-          onClick={() => void createSession()}
+          onClick={() => void createChat()}
         />
         <ActionRow icon={<FolderOpen />} label="Open project" onClick={() => void openWorkspace()} />
         <ActionRow
@@ -211,21 +224,33 @@ export function Sidebar() {
       )}
 
       <div className="mt-3 min-h-0 flex-1 overflow-y-auto px-3 pb-2">
-        {projects.map((project) => {
-          const collapsed = collapsedRoots.has(project.root);
-          return (
-            <ProjectGroup
-              key={project.root}
-              root={project.root}
-              sessions={project.sessions}
-              now={now}
-              collapsed={collapsed}
-              canRemove={openRoots.length > 1}
-              onToggle={() => toggleProject(project.root)}
-              onRemove={() => requestRemoveProject(project.root, projectSessionCounts.get(project.root) ?? 0)}
-            />
-          );
-        })}
+        <Reorder.Group
+          axis="y"
+          values={openRoots}
+          onReorder={(roots) => void reorderWorkspaces(roots)}
+          className="m-0 flex list-none flex-col gap-0.5 p-0"
+        >
+          {projects.map((project) => {
+            const collapsed = collapsedRoots.has(project.root);
+            return (
+              <Reorder.Item
+                key={project.root}
+                value={project.root}
+                transition={{ type: "spring", duration: 0.3, bounce: 0.1 }}
+              >
+                <ProjectGroup
+                  root={project.root}
+                  sessions={project.sessions}
+                  now={now}
+                  collapsed={collapsed}
+                  canRemove={openRoots.length > 1}
+                  onToggle={() => toggleProject(project.root)}
+                  onRemove={() => requestRemoveProject(project.root, projectSessionCounts.get(project.root) ?? 0)}
+                />
+              </Reorder.Item>
+            );
+          })}
+        </Reorder.Group>
 
         {otherProjects.length > 0 && (
           <div className="mt-4">

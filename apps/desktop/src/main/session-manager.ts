@@ -42,6 +42,10 @@ export class SessionManager {
   private activeMeta: SessionMeta | null = null;
   /** Provider/workspace signature; a change forces a context-preserving rebuild. */
   private configKey = "";
+  private disposePromise: Promise<void> | null = null;
+  private activeSend: Promise<{ ok: boolean; error?: string }> | null = null;
+  private readonly pumps = new Set<Promise<void>>();
+  private closing = false;
   private readonly store: SessionStore;
   readonly terminals: TerminalManager;
   readonly git: GitManager;
@@ -118,7 +122,11 @@ export class SessionManager {
       agents,
       titleModels,
     });
-    this.pump(this.session, meta.id);
+    const pump = this.pump(this.session, meta.id).catch((error) => {
+      console.error("Session event pump failed", error);
+    });
+    this.pumps.add(pump);
+    void pump.finally(() => this.pumps.delete(pump));
     return this.session;
   }
 
@@ -298,11 +306,22 @@ export class SessionManager {
     else this.session?.answerQuestion(body.requestId, body.answers);
   }
 
-  async send(message: string): Promise<{ ok: boolean; error?: string }> {
+  send(message: string): Promise<{ ok: boolean; error?: string }> {
+    if (this.closing) return Promise.resolve({ ok: false, error: "The window is closing." });
+    const operation = this.sendInternal(message);
+    this.activeSend = operation;
+    void operation.finally(() => {
+      if (this.activeSend === operation) this.activeSend = null;
+    });
+    return operation;
+  }
+
+  private async sendInternal(message: string): Promise<{ ok: boolean; error?: string }> {
     try {
       if (!this.activeMeta) await this.init();
       const meta = this.activeMeta!;
       const session = await this.ensureSession();
+      if (this.closing) return { ok: false, error: "The window is closing." };
       // Persist the user turn + metadata before running the agent.
       this.store.appendUser(meta.id, message);
       meta.messageCount += 1;
@@ -311,6 +330,7 @@ export class SessionManager {
         updatedAt: Date.now(),
       });
       this.notifyChanged();
+      if (this.closing) return { ok: false, error: "The window is closing." };
 
       await session.send(message);
       // Snapshot model context after the turn resolves.
@@ -325,11 +345,20 @@ export class SessionManager {
     this.session?.abort();
   }
 
-  async dispose(): Promise<void> {
+  private async disposeInternal(): Promise<void> {
     this.terminals.dispose();
     this.git.dispose();
+    this.session?.abort();
+    await this.activeSend?.catch(() => undefined);
     await this.teardownActive();
+    await Promise.allSettled(this.pumps);
     await this.store.dispose();
+  }
+
+  dispose(): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
+    this.closing = true;
+    return (this.disposePromise = this.disposeInternal());
   }
 }
 

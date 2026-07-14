@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tile" x1="154" y1="112" x2="870" y2="908" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#182D40" />
+      <stop offset="0.55" stop-color="#0B1722" />
+      <stop offset="1" stop-color="#060D14" />
+    </linearGradient>
+    <linearGradient id="panel" x1="270" y1="270" x2="760" y2="750" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#18344B" />
+      <stop offset="1" stop-color="#0A1824" />
+    </linearGradient>
+    <linearGradient id="prompt" x1="340" y1="390" x2="690" y2="650" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8AC8F4" />
+      <stop offset="0.48" stop-color="#5EA4D9" />
+      <stop offset="1" stop-color="#3678B5" />
+    </linearGradient>
+    <filter id="tileShadow" x="28" y="24" width="968" height="988" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="38" stdDeviation="38" flood-color="#000713" flood-opacity="0.48" />
+    </filter>
+    <filter id="promptGlow" x="250" y="330" width="530" height="390" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="16" stdDeviation="24" flood-color="#4E9CD7" flood-opacity="0.38" />
+    </filter>
+  </defs>
+
+  <g filter="url(#tileShadow)">
+    <rect x="90" y="72" width="844" height="844" rx="198" fill="url(#tile)" />
+    <rect x="102" y="84" width="820" height="820" rx="186" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="8" />
+    <path d="M156 278C221 159 342 105 476 105H665C777 105 865 178 902 277" fill="none" stroke="#FFFFFF" stroke-opacity="0.06" stroke-width="28" stroke-linecap="round" />
+  </g>
+
+  <rect x="224" y="248" width="576" height="520" rx="104" fill="url(#panel)" stroke="#78B9E8" stroke-opacity="0.24" stroke-width="10" />
+  <path d="M229 354H795" stroke="#FFFFFF" stroke-opacity="0.09" stroke-width="10" />
+  <circle cx="310" cy="302" r="14" fill="#78B9E8" opacity="0.42" />
+  <circle cx="358" cy="302" r="14" fill="#78B9E8" opacity="0.27" />
+  <circle cx="406" cy="302" r="14" fill="#78B9E8" opacity="0.16" />
+
+  <g filter="url(#promptGlow)" fill="none" stroke="url(#prompt)" stroke-width="48" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M350 449L455 537L350 625" />
+    <path d="M532 625H680" />
+  </g>
+  <path d="M532 609H680" stroke="#B9E1FA" stroke-opacity="0.25" stroke-width="10" stroke-linecap="round" />
+</svg>

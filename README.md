@@ -46,6 +46,8 @@ node apps/desktop/node_modules/electron/install.js
 ```sh
 bun run dev         # launch the Electron desktop app (electron-vite dev)
 bun run build       # build the desktop app bundles
+bun run pack:mac    # build the signed local arm64 .app
+bun run dist:mac    # build the signed local arm64 app, DMG, and ZIP
 bun test            # run the core unit + integration tests
 bun run typecheck   # typecheck all packages and the app
 ```

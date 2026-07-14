@@ -23,7 +23,10 @@ export default defineConfig({
   },
   preload: {
     build: {
-      rollupOptions: { external: ["electron"] },
+      rollupOptions: {
+        external: ["electron"],
+        output: { format: "cjs", entryFileNames: "[name].js" },
+      },
     },
   },
   renderer: {

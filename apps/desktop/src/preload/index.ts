@@ -12,11 +12,22 @@ import {
   type AppSettingsInput,
   type CozyApi,
   type GitStatus,
+  isNativeCommand,
+  type NativeCommand,
   type PermissionPreset,
   type SessionMeta,
   type TermData,
   type TermExit,
 } from "../shared/ipc.ts";
+
+const nativeCommandListeners = new Set<(command: NativeCommand) => void>();
+const pendingNativeCommands: NativeCommand[] = [];
+
+ipcRenderer.on(IPC.nativeCommand, (_event, value: unknown) => {
+  if (!isNativeCommand(value)) return;
+  if (!nativeCommandListeners.size) pendingNativeCommands.push(value);
+  else nativeCommandListeners.forEach((listener) => listener(value));
+});
 
 const api: CozyApi = {
   getSettings: () => ipcRenderer.invoke(IPC.settingsGet),
@@ -99,6 +110,16 @@ const api: CozyApi = {
     const listener = (_e: IpcRendererEvent, sessions: SessionMeta[]) => cb(sessions);
     ipcRenderer.on(IPC.sessionsChanged, listener);
     return () => ipcRenderer.off(IPC.sessionsChanged, listener);
+  },
+  onNativeCommand(cb: (command: NativeCommand) => void) {
+    nativeCommandListeners.add(cb);
+    pendingNativeCommands.splice(0).forEach(cb);
+    return () => {
+      nativeCommandListeners.delete(cb);
+    };
+  },
+  setDockBadge(count: number) {
+    ipcRenderer.send(IPC.dockBadge, count);
   },
 };
 

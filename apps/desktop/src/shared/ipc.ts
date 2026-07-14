@@ -153,7 +153,30 @@ export const IPC = {
   termData: "term:data",
   termExit: "term:exit",
   gitChanged: "git:changed",
+  nativeCommand: "native:command",
+  dockBadge: "native:dock-badge",
 } as const;
+
+export const NATIVE_COMMANDS = [
+  "new-chat",
+  "open-project",
+  "export-current-session",
+  "open-settings",
+  "toggle-sidebar",
+  "toggle-terminal",
+  "toggle-content-panel",
+  "cycle-effort",
+  "navigate-back",
+  "navigate-forward",
+  "new-terminal",
+  "show-help",
+] as const;
+
+export type NativeCommand = (typeof NATIVE_COMMANDS)[number];
+
+export function isNativeCommand(value: unknown): value is NativeCommand {
+  return typeof value === "string" && (NATIVE_COMMANDS as readonly string[]).includes(value);
+}
 
 /** The typed API exposed on `window.cozy` by the preload script. */
 export interface CozyApi {
@@ -214,6 +237,8 @@ export interface CozyApi {
   // push streams (permission-asked / permission-replied arrive via onEvent)
   onEvent(cb: (event: SessionEvent) => void): () => void;
   onSessionsChanged(cb: (sessions: SessionMeta[]) => void): () => void;
+  onNativeCommand(cb: (command: NativeCommand) => void): () => void;
+  setDockBadge(count: number): void;
 }
 
 declare global {

@@ -5,8 +5,8 @@ import { useApp } from "../../store/app-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-function apply(list: ProviderList): void {
-  useApp.setState({ providers: list });
+async function apply(list: ProviderList): Promise<void> {
+  await useApp.getState().applyProviders(list);
 }
 
 function ApiKeyForm({ provider, onDone }: { provider: ProviderInfo; onDone(): void }) {
@@ -21,7 +21,7 @@ function ApiKeyForm({ provider, onDone }: { provider: ProviderInfo; onDone(): vo
         setSaving(true);
         setError(null);
         try {
-          apply(await window.cozy.providers.connectApi(provider.id, key));
+          await apply(await window.cozy.providers.connectApi(provider.id, key));
           onDone();
         } catch (cause) {
           setError(cause instanceof Error ? cause.message : String(cause));
@@ -99,7 +99,7 @@ function ConnectCard({ provider, onDone }: { provider: ProviderInfo; onDone(): v
               setWaiting({ start, method: index });
               const result = await window.cozy.providers.oauthWait(provider.id, start.attemptID);
               if (result.status === "complete") {
-                apply(await window.cozy.providers.list());
+                await apply(await window.cozy.providers.list());
                 onDone();
               } else if (result.status === "failed") {
                 setError(result.message || "Authorization failed.");
@@ -132,7 +132,7 @@ function CustomProviderForm({ onDone }: { onDone(): void }) {
         event.preventDefault();
         if (!validID) return setError("Use lowercase letters, numbers, hyphens, or underscores.");
         try {
-          apply(await window.cozy.providers.addCustom({
+          await apply(await window.cozy.providers.addCustom({
             ...draft,
             models: models.split("\n").map((item) => item.trim()).filter(Boolean),
           }));
@@ -210,7 +210,9 @@ export function ProvidersSection() {
                   </p>
                 </div>
                 {connected ? (
-                  <Button variant="ghost" onClick={async () => apply(await window.cozy.providers.disconnect(provider.id))}>
+                  <Button variant="ghost" onClick={async () => {
+                    await apply(await window.cozy.providers.disconnect(provider.id));
+                  }}>
                     <Unplug className="size-4" /> Disconnect
                   </Button>
                 ) : (

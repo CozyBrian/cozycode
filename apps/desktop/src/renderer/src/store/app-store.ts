@@ -55,6 +55,8 @@ export interface AppState {
   contentPanelWidth: number;
   contentPanelTab: ContentPanelTab;
   settingsOpen: boolean;
+  /** Settings was left through Back/Chats and can be restored with Forward. */
+  settingsForwardAvailable: boolean;
   settingsSection: SettingsSection;
   helpOpen: boolean;
   modelPickerOpen: boolean;
@@ -128,6 +130,7 @@ export interface AppState {
   setSettings(s: AppSettings): void;
   openWorkspace(): Promise<void>;
   removeWorkspace(root: string): Promise<void>;
+  reorderWorkspaces(roots: string[]): Promise<void>;
 
   viewSubagent(sessionId: string): void;
   exitSubagent(): void;
@@ -150,6 +153,7 @@ export interface AppState {
   setModel(model: ModelRef): void;
   /** Set the reasoning effort for the current model (undefined clears to default). */
   setEffort(effort: string | undefined): void;
+  applyProviders(providers: ProviderList): Promise<void>;
   refreshProviders(): Promise<void>;
   replyPermission(requestId: string, reply: PermissionReply, message?: string): void;
   answerQuestion(requestId: string, answers: string[][]): void;
@@ -237,6 +241,7 @@ export const useApp = create<AppState>((set, get) => ({
   contentPanelWidth: 320,
   contentPanelTab: "overview",
   settingsOpen: false,
+  settingsForwardAvailable: false,
   settingsSection: "general",
   helpOpen: false,
   modelPickerOpen: false,
@@ -272,35 +277,45 @@ export const useApp = create<AppState>((set, get) => ({
   async bootstrap() {
     const settings = await window.cozy.getSettings();
     const providers = await window.cozy.providers.list();
-    const configured = Boolean(settings?.workspaceRoot && providers.connected.length > 0);
-    set({
-      settings,
-      providers,
-      recentModels: settings?.recentModels ?? [],
-      loaded: true,
-      settingsOpen: !configured || get().settingsOpen,
-      settingsSection: providers.connected.length ? "general" : "providers",
-    });
+    const ready = providers.connected.length > 0;
     const sessions = await window.cozy.listSessions();
-    set({ sessions });
-    if (configured) {
+    if (ready) {
       // Activate (or create) the most-recent session.
       const snap = sessions[0]
         ? await window.cozy.activateSession(sessions[0].id)
         : await window.cozy.createSession();
       set({
         activeId: snap.meta.id,
+        settings,
+        providers,
+        recentModels: settings?.recentModels ?? [],
+        sessions,
+        loaded: true,
+        settingsOpen: false,
+        settingsForwardAvailable: false,
+        settingsSection: "general",
         items: replayRecords(snap.records),
         ...sumUsage(snap.records),
         preset: snap.meta.preset,
         model: snap.meta.model,
-        effort: storedEffort(get(), snap.meta.model),
+        effort: storedEffort({ settings, providers }, snap.meta.model),
         busy: false,
         sessionHistory: [snap.meta.id],
         sessionHistoryIndex: 0,
       });
       void get().refreshSessions();
+      return;
     }
+    set({
+      settings,
+      providers,
+      recentModels: settings?.recentModels ?? [],
+      sessions,
+      loaded: true,
+      settingsOpen: true,
+      settingsForwardAvailable: false,
+      settingsSection: "providers",
+    });
   },
 
   applyEvent(event) {
@@ -365,8 +380,19 @@ export const useApp = create<AppState>((set, get) => ({
       // Non-fatal; the pane keeps its last snapshot.
     }
   },
-  openSettings: (section = "general") => set({ settingsOpen: true, settingsSection: section, contentPanelOpen: false }),
-  closeSettings: () => set({ settingsOpen: false }),
+  openSettings: (section = "general") =>
+    set({
+      settingsOpen: true,
+      settingsForwardAvailable: false,
+      settingsSection: section,
+      contentPanelOpen: false,
+    }),
+  closeSettings: () =>
+    set((state) =>
+      state.activeId
+        ? { settingsOpen: false, settingsForwardAvailable: true }
+        : state,
+    ),
   setHelpOpen: (open) => set({ helpOpen: open }),
   setModelPickerOpen: (open) => set({ modelPickerOpen: open }),
   setEffortPickerOpen: (open) => set({ effortPickerOpen: open }),
@@ -375,13 +401,19 @@ export const useApp = create<AppState>((set, get) => ({
 
   async openWorkspace() {
     const root = await window.cozy.pickWorkspace();
-    const settings = get().settings;
-    if (!root || !settings) return;
-    const next = {
-      ...settings,
-      workspaceRoot: root,
-      openWorkspaceRoots: workspaceRoots(root, settings.openWorkspaceRoots),
-    };
+    if (!root) return;
+    const current = get().settings;
+    const next: AppSettings = current
+      ? {
+          ...current,
+          workspaceRoot: root,
+          openWorkspaceRoots: workspaceRoots(root, current.openWorkspaceRoots),
+        }
+      : {
+          workspaceRoot: root,
+          openWorkspaceRoots: [root],
+          recentModels: get().recentModels,
+        };
     set({ settings: next });
     await window.cozy.saveSettings(next);
   },
@@ -397,6 +429,16 @@ export const useApp = create<AppState>((set, get) => ({
       workspaceRoot: settings.workspaceRoot === root ? openWorkspaceRoots[0]! : settings.workspaceRoot,
       openWorkspaceRoots,
     };
+    set({ settings: next });
+    await window.cozy.saveSettings(next);
+  },
+
+  async reorderWorkspaces(roots) {
+    const settings = get().settings;
+    if (!settings) return;
+    const current = workspaceRoots(settings.workspaceRoot, settings.openWorkspaceRoots);
+    if (roots.length !== current.length || roots.some((root) => !current.includes(root))) return;
+    const next = { ...settings, openWorkspaceRoots: roots };
     set({ settings: next });
     await window.cozy.saveSettings(next);
   },
@@ -424,8 +466,7 @@ export const useApp = create<AppState>((set, get) => ({
     }),
   navigateBack: () => {
     if (get().settingsOpen) {
-      const { settings, providers } = get();
-      if (settings?.workspaceRoot && providers?.connected.length) get().closeSettings();
+      get().closeSettings();
       return;
     }
     const { subagentHistoryIndex, sessionHistoryIndex } = get();
@@ -441,7 +482,13 @@ export const useApp = create<AppState>((set, get) => ({
   },
   navigateForward: () => {
     if (get().settingsOpen) return;
-    const { subagentHistory, subagentHistoryIndex, sessionHistory, sessionHistoryIndex } = get();
+    const {
+      subagentHistory,
+      subagentHistoryIndex,
+      sessionHistory,
+      sessionHistoryIndex,
+      settingsForwardAvailable,
+    } = get();
     if (subagentHistoryIndex < subagentHistory.length - 1) {
       get().navigateSubagentForward();
       return;
@@ -450,6 +497,10 @@ export const useApp = create<AppState>((set, get) => ({
       const nextIndex = sessionHistoryIndex + 1;
       const id = sessionHistory[nextIndex];
       if (id) void get().activateSession(id, false, nextIndex);
+      return;
+    }
+    if (settingsForwardAvailable) {
+      set({ settingsOpen: true, settingsForwardAvailable: false, contentPanelOpen: false });
     }
   },
 
@@ -462,7 +513,7 @@ export const useApp = create<AppState>((set, get) => ({
     const empty = emptySessionForWorkspace(get().sessions, root);
     if (empty) {
       if (empty.id !== get().activeId) await get().activateSession(empty.id);
-      else set({ settingsOpen: false });
+      else set({ settingsOpen: false, settingsForwardAvailable: false });
       return;
     }
 
@@ -482,6 +533,7 @@ export const useApp = create<AppState>((set, get) => ({
       subagentHistory: [null],
       subagentHistoryIndex: 0,
       settingsOpen: false,
+      settingsForwardAvailable: false,
       sessionHistory: [...get().sessionHistory.slice(0, get().sessionHistoryIndex + 1), snap.meta.id],
       sessionHistoryIndex: get().sessionHistoryIndex + 1,
     });
@@ -512,6 +564,7 @@ export const useApp = create<AppState>((set, get) => ({
       subagentHistory: [null],
       subagentHistoryIndex: 0,
       settingsOpen: false,
+      settingsForwardAvailable: recordHistory ? false : get().settingsForwardAvailable,
       sessionHistory: nextHistory,
       sessionHistoryIndex: nextHistoryIndex,
     });
@@ -625,8 +678,13 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
 
+  async applyProviders(providers) {
+    set({ providers });
+    if (!get().activeId && providers.connected.length) await get().bootstrap();
+  },
+
   async refreshProviders() {
-    set({ providers: await window.cozy.providers.list() });
+    await get().applyProviders(await window.cozy.providers.list());
   },
 
   replyPermission(requestId, reply, message) {
