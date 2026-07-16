@@ -167,6 +167,12 @@ function installNativeMenus(): void {
         { role: "zoomOut" },
         { type: "separator" },
         { role: "togglefullscreen" },
+        ...(!app.isPackaged
+          ? ([
+              { type: "separator" },
+              { role: "toggleDevTools" },
+            ] satisfies MenuItemConstructorOptions[])
+          : []),
       ],
     },
     {
@@ -240,6 +246,7 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      devTools: !app.isPackaged,
     },
   });
 

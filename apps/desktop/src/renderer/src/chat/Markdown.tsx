@@ -1,4 +1,4 @@
-import { isValidElement, useState, type ReactNode } from "react";
+import { isValidElement, memo, useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
@@ -89,7 +89,7 @@ function textContent(node: ReactNode): string {
   return "";
 }
 
-export function Markdown({ text }: { text: string }) {
+export const Markdown = memo(function Markdown({ text }: { text: string }) {
   return (
     <div className="markdown selectable text-[15px] leading-relaxed text-foreground">
       <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={components}>
@@ -97,4 +97,4 @@ export function Markdown({ text }: { text: string }) {
       </ReactMarkdown>
     </div>
   );
-}
+});

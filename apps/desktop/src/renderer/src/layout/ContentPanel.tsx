@@ -104,7 +104,7 @@ export function ContentPanel() {
           </div>
         </header>
         <div className="content-panel-scroll min-h-0 flex-1 overflow-auto">
-          <PaneBody />
+          {open ? <PaneBody /> : null}
         </div>
       </div>
       {/* Resize handle */}

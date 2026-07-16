@@ -1,3 +1,4 @@
+import { useDeferredValue, useMemo } from "react";
 import { useApp } from "../store/app-store";
 import { compactTokens, compactTokensAlways } from "@/lib/format";
 import { estimateContext } from "./context-estimate";
@@ -35,6 +36,7 @@ export function OverviewPane() {
   const turnUsage = useApp((s) => s.turnUsage);
   const sessionUsage = useApp((s) => s.sessionUsage);
   const items = useApp((s) => s.items);
+  const deferredItems = useDeferredValue(items);
 
   const meta = sessions.find((s) => s.id === activeId);
   const provider = providers?.all.find((p) => p.id === model?.providerID);
@@ -44,7 +46,7 @@ export function OverviewPane() {
   const inputTokens = turnUsage?.inputTokens ?? 0;
   const pct = contextWindow ? Math.min(100, Math.round((inputTokens / contextWindow) * 100)) : null;
 
-  const estimate = estimateContext(items);
+  const estimate = useMemo(() => estimateContext(deferredItems), [deferredItems]);
 
   const title =
     meta && !meta.title.startsWith("New session - ") ? meta.title : "Untitled session";

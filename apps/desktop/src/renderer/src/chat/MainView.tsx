@@ -30,14 +30,12 @@ function ChatHeader({ title, active }: { title: string; active: boolean }) {
 }
 
 export function MainView() {
-  const items = useApp((s) => s.items);
-  const busy = useApp((s) => s.busy);
+  const empty = useApp((s) => s.items.length === 0 && !s.busy);
   const sessions = useApp((s) => s.sessions);
   const activeId = useApp((s) => s.activeId);
 
   const active = sessions.find((s) => s.id === activeId);
   const project = projectLabel(active?.workspaceRoot ?? null);
-  const empty = items.length === 0 && !busy;
   const started = !empty;
   const title = active?.title.startsWith("New session - ") ? "" : (active?.title ?? "");
 

@@ -1,31 +1,40 @@
-import { useEffect, useRef, useState, type UIEvent, type WheelEvent } from "react";
+import {
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type UIEvent,
+  type WheelEvent,
+} from "react";
 import { ArrowLeft, Check, Copy } from "lucide-react";
 import { pickSpinnerVerb } from "@cozycode/commands";
+import {
+  Virtuoso,
+  type StateSnapshot,
+  type VirtuosoHandle,
+} from "react-virtuoso";
 import { useApp } from "../store/app-store";
 import { ContextToolGroup, ToolCard } from "../components/ToolCard";
 import { ReasoningCard } from "../components/ReasoningCard";
 import { TextShimmer } from "../components/TextShimmer";
-import { isContextTool, type ToolItem } from "../components/tool-presentation.ts";
 import type { TranscriptItem } from "../transcript.ts";
 import { Markdown } from "./Markdown";
+import { transcriptRows, type TranscriptRow } from "./transcript-rows.ts";
 
-/** Group context reads/searches and render a list of transcript items. */
-function renderRows(items: TranscriptItem[]) {
-  const rows: Array<TranscriptItem | ToolItem[]> = [];
-  for (const item of items) {
-    const previous = rows.at(-1);
-    if (isContextTool(item) && Array.isArray(previous)) previous.push(item);
-    else if (isContextTool(item)) rows.push([item]);
-    else rows.push(item);
-  }
-  return rows.map((row) =>
-    Array.isArray(row) ? (
-      <ContextToolGroup key={row[0]?.id} items={row} />
-    ) : (
-      <Row key={row.id} item={row} />
-    ),
-  );
-}
+type DisplayRow =
+  | TranscriptRow
+  | {
+      key: string;
+      kind: "subagent-header";
+      agent: string;
+      description: string;
+      status: "running" | "done" | "error";
+    }
+  | { key: string; kind: "status"; text: string };
+
+const routeSnapshots = new Map<string, StateSnapshot>();
+const routeFollowing = new Map<string, boolean>();
 
 /** Find a subagent block by its child session id across the transcript. */
 function findSubagent(items: TranscriptItem[], sessionId: string) {
@@ -35,7 +44,7 @@ function findSubagent(items: TranscriptItem[], sessionId: string) {
   return null;
 }
 
-function Row({ item }: { item: TranscriptItem }) {
+const Row = memo(function Row({ item }: { item: TranscriptItem }) {
   switch (item.kind) {
     case "user":
       return (
@@ -62,7 +71,7 @@ function Row({ item }: { item: TranscriptItem }) {
         <div className="selectable text-center text-xs text-muted-foreground">{item.text}</div>
       );
   }
-}
+});
 
 function AssistantMessage({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -91,24 +100,63 @@ function AssistantMessage({ text }: { text: string }) {
   );
 }
 
-export function Transcript() {
-  const items = useApp((s) => s.items);
-  const busy = useApp((s) => s.busy);
-  const activeId = useApp((s) => s.activeId);
-  const subagentView = useApp((s) => s.subagentView);
-  const exitSubagent = useApp((s) => s.exitSubagent);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const followingRef = useRef(true);
-  const [verb, setVerb] = useState(() => pickSpinnerVerb());
+function sameDisplayRow(previous: { row: DisplayRow }, next: { row: DisplayRow }) {
+  if (previous.row === next.row) return true;
+  if (previous.row.kind !== next.row.kind || previous.row.key !== next.row.key) return false;
+  if (previous.row.kind === "item" && next.row.kind === "item") {
+    return previous.row.item === next.row.item;
+  }
+  if (previous.row.kind === "context" && next.row.kind === "context") {
+    const nextItems = next.row.items;
+    return (
+      previous.row.items.length === nextItems.length &&
+      previous.row.items.every((item, index) => item === nextItems[index])
+    );
+  }
+  return false;
+}
+
+const DisplayRowView = memo(function DisplayRowView({ row }: { row: DisplayRow }) {
+  if (row.kind === "item") return <Row item={row.item} />;
+  if (row.kind === "context") return <ContextToolGroup items={row.items} />;
+  if (row.kind === "status") return <TextShimmer className="text-sm">{row.text}</TextShimmer>;
+  return (
+    <div className="flex items-center gap-2 border-b border-border/60 pb-3">
+      <button
+        type="button"
+        onClick={() => useApp.getState().exitSubagent()}
+        className="flex items-center gap-1 rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
+      >
+        <ArrowLeft className="size-4" />
+        Back
+      </button>
+      <span className="text-sm font-medium text-foreground">{row.agent}</span>
+      <span className="truncate text-sm text-muted-foreground">{row.description}</span>
+      <span className="ml-auto text-xs text-muted-foreground">
+        {row.status === "running" ? "running…" : row.status === "error" ? "failed" : "completed"}
+      </span>
+    </div>
+  );
+}, sameDisplayRow);
+
+function VirtualTranscript({ routeKey, rows }: { routeKey: string; rows: DisplayRow[] }) {
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const followingRef = useRef(routeFollowing.get(routeKey) ?? true);
+  const [snapshot] = useState(() => routeSnapshots.get(routeKey));
 
   useEffect(() => {
-    if (!busy) return;
-    setVerb(pickSpinnerVerb());
-    const interval = setInterval(() => setVerb(pickSpinnerVerb()), 4500);
-    return () => clearInterval(interval);
-  }, [busy]);
+    if (!followingRef.current) return;
+    const frame = requestAnimationFrame(() => virtuosoRef.current?.autoscrollToBottom());
+    return () => cancelAnimationFrame(frame);
+  }, [rows]);
 
-  const subagent = subagentView ? findSubagent(items, subagentView) : null;
+  useEffect(
+    () => () => {
+      routeFollowing.set(routeKey, followingRef.current);
+      virtuosoRef.current?.getState((state) => routeSnapshots.set(routeKey, state));
+    },
+    [routeKey],
+  );
 
   const handleScroll = (event: UIEvent<HTMLDivElement>) => {
     const element = event.currentTarget;
@@ -119,61 +167,72 @@ export function Transcript() {
     if (event.deltaY < 0) followingRef.current = false;
   };
 
-  useEffect(() => {
-    followingRef.current = true;
-  }, [activeId, subagentView]);
-
-  useEffect(() => {
-    if (followingRef.current) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [activeId, items, busy, subagentView, subagent?.items]);
-
-  // Read-only drill-in view of a subagent (the live parent turn keeps running).
-  if (subagentView && subagent) {
-    return (
-      <div
-        ref={scrollRef}
-        onScroll={handleScroll}
-        onWheel={handleWheel}
-        className="min-h-0 flex-1 overflow-y-auto"
-      >
-        <div className="mx-auto flex max-w-190 flex-col gap-4 px-6 py-6">
-          <div className="flex items-center gap-2 border-b border-border/60 pb-3">
-            <button
-              type="button"
-              onClick={exitSubagent}
-              className="flex items-center gap-1 rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
-            >
-              <ArrowLeft className="size-4" />
-              Back
-            </button>
-            <span className="text-sm font-medium text-foreground">{subagent.agent}</span>
-            <span className="truncate text-sm text-muted-foreground">{subagent.description}</span>
-            <span className="ml-auto text-xs text-muted-foreground">
-              {subagent.status === "running" ? "running…" : subagent.status === "error" ? "failed" : "completed"}
-            </span>
-          </div>
-          {renderRows(subagent.items)}
-          {subagent.status === "running" && (
-            <TextShimmer className="text-sm">Working…</TextShimmer>
-          )}
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div
-      ref={scrollRef}
+    <Virtuoso
+      ref={virtuosoRef}
+      className="min-h-0 flex-1"
+      data={rows}
+      alignToBottom
+      computeItemKey={(_index, row) => row.key}
+      defaultItemHeight={80}
+      increaseViewportBy={{ top: 500, bottom: 700 }}
+      initialTopMostItemIndex={
+        snapshot ? undefined : { index: Math.max(0, rows.length - 1), align: "end" }
+      }
+      restoreStateFrom={snapshot}
+      followOutput={() => (followingRef.current ? "auto" : false)}
       onScroll={handleScroll}
       onWheel={handleWheel}
-      className="min-h-0 flex-1 overflow-y-auto"
-    >
-      <div className="mx-auto flex max-w-190 flex-col gap-4 px-6 py-6">
-        {renderRows(items)}
-        {busy && !items.some((i) => i.kind === "assistant" && i.streaming) && (
-          <TextShimmer className="text-sm">{`${verb}…`}</TextShimmer>
-        )}
-      </div>
-    </div>
+      itemContent={(index, row) => (
+        <div
+          className={`mx-auto w-full max-w-190 px-6 pb-4 ${index === 0 ? "pt-6" : ""}`}
+        >
+          <DisplayRowView row={row} />
+        </div>
+      )}
+    />
   );
+}
+
+export function Transcript() {
+  const items = useApp((s) => s.items);
+  const busy = useApp((s) => s.busy);
+  const activeId = useApp((s) => s.activeId);
+  const subagentView = useApp((s) => s.subagentView);
+  const [verb, setVerb] = useState(() => pickSpinnerVerb());
+
+  useEffect(() => {
+    if (!busy) return;
+    setVerb(pickSpinnerVerb());
+    const interval = setInterval(() => setVerb(pickSpinnerVerb()), 4500);
+    return () => clearInterval(interval);
+  }, [busy]);
+
+  const subagent = subagentView ? findSubagent(items, subagentView) : null;
+  const rows = useMemo<DisplayRow[]>(() => {
+    if (subagentView && subagent) {
+      return [
+        {
+          key: `subagent-header:${subagent.sessionId}`,
+          kind: "subagent-header",
+          agent: subagent.agent,
+          description: subagent.description,
+          status: subagent.status,
+        },
+        ...transcriptRows(subagent.items),
+        ...(subagent.status === "running"
+          ? [{ key: `subagent-status:${subagent.sessionId}`, kind: "status" as const, text: "Working…" }]
+          : []),
+      ];
+    }
+
+    const next: DisplayRow[] = transcriptRows(items);
+    if (busy && !items.some((item) => item.kind === "assistant" && item.streaming)) {
+      next.push({ key: "session-status", kind: "status", text: `${verb}…` });
+    }
+    return next;
+  }, [busy, items, subagent, subagentView, verb]);
+
+  const routeKey = `${activeId ?? "none"}:${subagentView ?? "parent"}`;
+  return <VirtualTranscript key={routeKey} routeKey={routeKey} rows={rows} />;
 }

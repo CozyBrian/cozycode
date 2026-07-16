@@ -21,6 +21,7 @@ export type TranscriptItem =
         description: string;
         status: "running" | "done" | "error";
         result?: string;
+        toolCount: number;
         /** The child's folded transcript, for the drill-in view + live status. */
         items: TranscriptItem[];
       };
@@ -107,6 +108,7 @@ export function foldEvent(items: TranscriptItem[], event: SessionEvent): Transcr
                 agent: event.agent,
                 description: event.description,
                 status: "running",
+                toolCount: 0,
                 items: [],
               },
             }
@@ -115,7 +117,15 @@ export function foldEvent(items: TranscriptItem[], event: SessionEvent): Transcr
     case "subagent-event":
       return items.map((it) =>
         it.kind === "tool" && it.toolCallId === event.toolCallId && it.subagent
-          ? { ...it, subagent: { ...it.subagent, items: foldEvent(it.subagent.items, event.event) } }
+          ? {
+              ...it,
+              subagent: {
+                ...it.subagent,
+                toolCount:
+                  it.subagent.toolCount + (event.event.type === "tool-call-start" ? 1 : 0),
+                items: foldEvent(it.subagent.items, event.event),
+              },
+            }
           : it,
       );
     case "subagent-finish":

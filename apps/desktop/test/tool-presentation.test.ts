@@ -52,4 +52,34 @@ describe("desktop tool presentation", () => {
     expect(shellOutput({ stdout: "one\r\ntwo", stderr: "three" })).toBe("one\ntwo\nthree");
     expect(changeCounts("--- a/file\n+++ b/file\n-old\n+new\n unchanged")).toEqual({ additions: 1, deletions: 1 });
   });
+
+  test("tracks subagent tool counts without rescanning its transcript", () => {
+    const items = [
+      { type: "tool-call-start", toolCallId: "task-1", toolName: "task", args: {} },
+      {
+        type: "subagent-start",
+        toolCallId: "task-1",
+        sessionId: "child-1",
+        agent: "explore",
+        description: "Inspect files",
+      },
+      {
+        type: "subagent-event",
+        toolCallId: "task-1",
+        sessionId: "child-1",
+        event: { type: "tool-call-start", toolCallId: "read-1", toolName: "read_file", args: {} },
+      },
+      {
+        type: "subagent-event",
+        toolCallId: "task-1",
+        sessionId: "child-1",
+        event: { type: "text-delta", text: "done" },
+      },
+    ].reduce<ReturnType<typeof foldEvent>>(
+      (current, event) => foldEvent(current, event as SessionEvent),
+      [],
+    );
+
+    expect(items[0]).toMatchObject({ subagent: { toolCount: 1 } });
+  });
 });

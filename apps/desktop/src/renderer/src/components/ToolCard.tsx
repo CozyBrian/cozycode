@@ -96,7 +96,7 @@ function TodoCard({ item }: { item: ToolItem }) {
 function SubagentCard({ item }: { item: ToolItem }) {
   const sub = item.subagent!;
   const viewSubagent = useApp((s) => s.viewSubagent);
-  const toolCount = sub.items.filter((it) => it.kind === "tool").length;
+  const toolCount = sub.toolCount;
   const status =
     sub.status === "done"
       ? "completed"

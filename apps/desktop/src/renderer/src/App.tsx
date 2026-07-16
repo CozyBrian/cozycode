@@ -11,6 +11,7 @@ import { TextShimmer } from "./components/TextShimmer";
 import { TitleControls, ViewControls } from "./layout/TitleBar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
+import { createSessionEventBatcher } from "./event-buffer.ts";
 
 export function App() {
   const loaded = useApp((s) => s.loaded);
@@ -92,7 +93,10 @@ export function App() {
 
   // Subscribe to the main-process push streams for the app's lifetime.
   useEffect(() => {
-    const offEvent = window.cozy.onEvent((envelope) => useApp.getState().applyEvent(envelope));
+    const eventBatcher = createSessionEventBatcher((envelope) =>
+      useApp.getState().applyEvent(envelope),
+    );
+    const offEvent = window.cozy.onEvent(eventBatcher.push);
     const offSessions = window.cozy.onSessionsChanged((sessions) =>
       useApp.setState({ sessions }),
     );
@@ -103,6 +107,7 @@ export function App() {
     const offGit = window.cozy.git.onChanged((status) => useApp.getState().setGitStatus(status));
     return () => {
       offEvent();
+      eventBatcher.dispose();
       offSessions();
       offProviders();
       offExit();
