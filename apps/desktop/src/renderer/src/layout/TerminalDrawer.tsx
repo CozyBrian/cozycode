@@ -26,6 +26,7 @@ export function TerminalDrawer() {
   const toggleTerminal = useApp((s) => s.toggleTerminal);
   const clock = useClock();
   const shouldReduceMotion = useReducedMotion();
+  const [resizing, setResizing] = useState(false);
 
   // Ensure at least one shell exists whenever the drawer opens.
   useEffect(() => {
@@ -36,6 +37,7 @@ export function TerminalDrawer() {
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
       dragging.current = true;
+      setResizing(true);
       const startY = e.clientY;
       const startH = height;
       const onMove = (ev: PointerEvent) => {
@@ -43,6 +45,7 @@ export function TerminalDrawer() {
       };
       const onUp = () => {
         dragging.current = false;
+        setResizing(false);
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
       };
@@ -65,7 +68,7 @@ export function TerminalDrawer() {
       className="shrink-0 overflow-hidden transition-[max-height]"
       style={{
         maxHeight: open ? `${height}px` : "0px",
-        transitionDuration: open ? "500ms" : "300ms",
+        transitionDuration: resizing ? "0ms" : open ? "500ms" : "300ms",
         transitionTimingFunction: open
           ? "cubic-bezier(0.32, 0.72, 0, 1)"
           : "cubic-bezier(0.77, 0, 0.175, 1)",

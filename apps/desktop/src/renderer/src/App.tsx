@@ -7,7 +7,6 @@ import { AppLayout } from "./layout/AppLayout";
 import { PermissionModal } from "./components/PermissionModal";
 import { QuestionModal } from "./components/QuestionModal";
 import { Help } from "./components/Help";
-import { EditUserTurnDialog } from "./components/EditUserTurnDialog";
 import { TextShimmer } from "./components/TextShimmer";
 import { TitleControls, ViewControls } from "./layout/TitleBar";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -197,7 +196,6 @@ export function App() {
           onReject={() => rejectQuestion(questionQueue[0]!.id, questionQueue[0]!.sessionId)}
         />
       )}
-      <EditUserTurnDialog />
       <Help open={helpOpen} onClose={() => setHelpOpen(false)} />
       <Toaster theme="dark" position="bottom-right" richColors />
     </TooltipProvider>

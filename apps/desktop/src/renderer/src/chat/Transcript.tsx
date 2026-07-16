@@ -70,6 +70,7 @@ const Row = memo(function Row({ item }: { item: TranscriptItem }) {
 function UserMessage({ item }: { item: Extract<TranscriptItem, { kind: "user" }> }) {
   const [copied, setCopied] = useState(false);
   const running = useApp((state) => state.running);
+  const activeId = useApp((state) => state.activeId);
   const isTopLevel = useApp((state) => state.subagentView === null);
   const forkFromTurn = useApp((state) => state.forkFromTurn);
   const setEditingUserTurn = useApp((state) => state.setEditingUserTurn);
@@ -110,7 +111,7 @@ function UserMessage({ item }: { item: Extract<TranscriptItem, { kind: "user" }>
             <button
               type="button"
               disabled={running}
-              onClick={() => setEditingUserTurn({ turnId: item.turnId!, text: item.text })}
+              onClick={() => activeId && setEditingUserTurn({ sessionId: activeId, turnId: item.turnId!, text: item.text })}
               className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground disabled:opacity-35"
               aria-label="Edit user message"
               title="Edit and continue"

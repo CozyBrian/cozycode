@@ -14,6 +14,7 @@ import {
 import { ToolDiff } from "./ToolDiff.tsx";
 import { useApp } from "../store/app-store";
 import { cn } from "@/lib/utils";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
 export function ToolCard({ item }: { item: ToolItem }) {
   if (item.toolName === "task" && item.subagent) return <SubagentCard item={item} />;
@@ -149,11 +150,9 @@ export function ContextToolGroup({ items }: { items: ToolItem[] }) {
         <span className={cn("font-medium", pending ? "text-foreground" : "text-muted-foreground")}>{pending ? "Gathering context" : "Gathered context"}</span>
         <span className="truncate text-muted-foreground">{summary}</span>
       </button>
-      {open ? (
-        <div id={id} className="border-t border-border/50 px-3 py-1">
+      <ToolDisclosure open={open} id={id} className="border-t border-border/50 px-3 py-1">
           {items.map((item) => <ContextTool key={item.id} item={item} />)}
-        </div>
-      ) : null}
+      </ToolDisclosure>
     </section>
   );
 }
@@ -186,7 +185,9 @@ function InlineTool({ item }: { item: ToolItem }) {
         {denied ? <span className="ml-auto text-xs text-destructive">denied</span> : null}
         {hasDetails && !running ? <ChevronRight className={cn("ml-auto size-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} /> : null}
       </button>
-      {open ? <pre id={id} className="selectable mx-3 mb-2 max-h-60 overflow-auto border-l border-border pl-3 font-mono text-xs leading-relaxed text-muted-foreground">{resultPreview(item.result)}</pre> : null}
+      <ToolDisclosure open={open} id={id} className="mx-3 mb-2">
+        <pre className="selectable max-h-60 overflow-auto border-l border-border pl-3 font-mono text-xs leading-relaxed text-muted-foreground">{resultPreview(item.result)}</pre>
+      </ToolDisclosure>
     </section>
   );
 }
@@ -216,7 +217,7 @@ function ShellTool({ item }: { item: ToolItem }) {
         <span className="truncate font-mono text-xs text-muted-foreground">{command}</span>
         <ChevronRight className={cn("ml-auto size-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
       </button>
-      {open ? <div id={id} className="relative mx-2 mb-2 rounded-md border border-border/70 bg-background/30"><button type="button" onClick={copy} className="absolute right-2 top-2 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100" aria-label="Copy command output">{copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}</button><pre className="selectable max-h-60 overflow-auto whitespace-pre-wrap break-words p-3 pr-10 font-mono text-xs leading-relaxed text-foreground">$ {command}{output ? `\n\n${output}` : ""}</pre>{result?.timedOut === true ? <p className="border-t border-border/60 px-3 py-2 text-xs text-warning">Command timed out</p> : null}{result?.truncated === true ? <p className="border-t border-border/60 px-3 py-2 text-xs text-warning">Output truncated</p> : null}</div> : null}
+      <ToolDisclosure open={open} id={id} className="relative mx-2 mb-2 rounded-md border border-border/70 bg-background/30"><button type="button" onClick={copy} className="absolute right-2 top-2 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100" aria-label="Copy command output">{copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}</button><pre className="selectable max-h-60 overflow-auto whitespace-pre-wrap break-words p-3 pr-10 font-mono text-xs leading-relaxed text-foreground">$ {command}{output ? `\n\n${output}` : ""}</pre>{result?.timedOut === true ? <p className="border-t border-border/60 px-3 py-2 text-xs text-warning">Command timed out</p> : null}{result?.truncated === true ? <p className="border-t border-border/60 px-3 py-2 text-xs text-warning">Output truncated</p> : null}</ToolDisclosure>
     </section>
   );
 }
@@ -264,7 +265,41 @@ function FileChangeTool({ item }: { item: ToolItem }) {
         </span>
         <ChevronRight className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
       </button>
-      {open ? <div id={id} className="selectable border-t border-border/60 bg-background/20"><ToolDiff path={path} patch={patch} /></div> : null}
+      <ToolDisclosure open={open} id={id} className="selectable border-t border-border/60 bg-background/20"><ToolDiff path={path} patch={patch} /></ToolDisclosure>
     </section>
+  );
+}
+
+function ToolDisclosure({
+  open,
+  id,
+  className,
+  children,
+}: {
+  open: boolean;
+  id: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const shouldReduceMotion = useReducedMotion();
+  const hidden = shouldReduceMotion
+    ? { opacity: 0 }
+    : { opacity: 0, transform: "translateY(-4px)" };
+
+  return (
+    <AnimatePresence initial={false}>
+      {open ? (
+        <motion.div
+          id={id}
+          initial={hidden}
+          animate={{ opacity: 1, transform: "translateY(0px)" }}
+          exit={hidden}
+          transition={{ duration: shouldReduceMotion ? 0.12 : 0.16, ease: [0.23, 1, 0.32, 1] }}
+          className={className}
+        >
+          {children}
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
   );
 }

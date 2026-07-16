@@ -2,6 +2,8 @@ import { ArrowDown, ArrowUp, GitBranch, RefreshCw } from "lucide-react";
 import { useApp } from "../store/app-store";
 import type { GitFileStatus } from "../../../shared/ipc.ts";
 import { cn } from "@/lib/utils";
+import { useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
 const STATUS_GLYPH: Record<GitFileStatus["status"], { char: string; className: string }> = {
   modified: { char: "M", className: "text-amber-400" },
@@ -71,6 +73,18 @@ function Group({ title, files, staged }: { title: string; files: GitFileStatus[]
 export function GitPane() {
   const status = useApp((s) => s.gitStatus);
   const refreshGit = useApp((s) => s.refreshGit);
+  const [refreshing, setRefreshing] = useState(false);
+  const shouldReduceMotion = useReducedMotion();
+
+  const refresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await refreshGit();
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   if (!status) {
     return (
@@ -112,25 +126,53 @@ export function GitPane() {
         ) : null}
         <button
           type="button"
-          onClick={() => void refreshGit()}
+          onClick={() => void refresh()}
+          disabled={refreshing}
           className="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-white/8 hover:text-foreground"
           title="Refresh"
         >
-          <RefreshCw className="size-3.5" />
+          {refreshing ? (
+            <motion.span
+              initial={false}
+              animate={shouldReduceMotion ? { opacity: 0.45 } : { transform: "rotate(360deg)" }}
+              transition={shouldReduceMotion
+                ? { duration: 0.12, ease: [0.23, 1, 0.32, 1] }
+                : { duration: 0.5, ease: "linear", repeat: Infinity }}
+              className="flex"
+            >
+              <RefreshCw className="size-3.5" />
+            </motion.span>
+          ) : <RefreshCw className="size-3.5" />}
         </button>
       </div>
       <div className="content-panel-scroll min-h-0 flex-1 overflow-auto p-2">
-        {clean ? (
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            Working tree clean.
-          </div>
-        ) : (
-          <div className="flex flex-col gap-4">
-            <Group title="Staged" files={staged} staged={true} />
-            <Group title="Changed" files={changed} staged={false} />
-            <Group title="Untracked" files={untracked} staged={false} />
-          </div>
-        )}
+        <AnimatePresence initial={false} mode="popLayout">
+          {clean ? (
+            <motion.div
+              key="clean"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: shouldReduceMotion ? 0.12 : 0.16, ease: [0.23, 1, 0.32, 1] }}
+              className="flex h-full items-center justify-center text-sm text-muted-foreground"
+            >
+              Working tree clean.
+            </motion.div>
+          ) : (
+            <motion.div
+              key="changes"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: shouldReduceMotion ? 0.12 : 0.16, ease: [0.23, 1, 0.32, 1] }}
+              className="flex flex-col gap-4"
+            >
+              <Group title="Staged" files={staged} staged={true} />
+              <Group title="Changed" files={changed} staged={false} />
+              <Group title="Untracked" files={untracked} staged={false} />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );

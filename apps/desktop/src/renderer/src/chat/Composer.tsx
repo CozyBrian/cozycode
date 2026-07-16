@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, Mic, Plus, Square } from "lucide-react";
+import { ArrowUp, Check, LoaderCircle, Mic, Plus, Square } from "lucide-react";
 import {
   matchPrefix,
   parseCommandInput,
@@ -14,6 +14,7 @@ import { CommandSuggestions } from "./CommandSuggestions";
 import { EffortPicker } from "./EffortPicker";
 import { ModelPicker } from "./ModelPicker";
 import { PermissionPill } from "./PermissionPill";
+import { confirmsEscapeStop, ESCAPE_STOP_WINDOW_MS } from "./escape-stop";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
@@ -28,12 +29,24 @@ export function Composer({ centered = false }: { centered?: boolean }) {
   const setInput = useApp((s) => s.setInput);
   const busy = useApp((s) => s.busy);
   const running = useApp((s) => s.running);
+  const activeId = useApp((s) => s.activeId);
   const preset = useApp((s) => s.preset);
+  const editingTurn = useApp((s) =>
+    s.editingUserTurn?.sessionId === s.activeId ? s.editingUserTurn : null,
+  );
+  const setEditingTurn = useApp((s) => s.setEditingUserTurn);
+  const editUserTurn = useApp((s) => s.editUserTurn);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const [selected, setSelected] = useState(0);
   const [dismissed, setDismissed] = useState(false);
-  const query = commandQuery(input);
+  const [editText, setEditText] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [stopPrimed, setStopPrimed] = useState(false);
+  const stopPrimedAt = useRef<number | null>(null);
+  const stopPrimeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const value = editingTurn ? editText : input;
+  const query = editingTurn ? null : commandQuery(input);
   const suggestions = query === null ? [] : matchPrefix(query);
   const showSuggestions = suggestions.length > 0 && !dismissed;
 
@@ -42,13 +55,90 @@ export function Composer({ centered = false }: { centered?: boolean }) {
     setDismissed(false);
   }, [input]);
 
+  useEffect(() => {
+    if (!editingTurn) {
+      setSavingEdit(false);
+      return;
+    }
+    setEditText(editingTurn.text);
+    setSavingEdit(false);
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      textarea.setSelectionRange(editingTurn.text.length, editingTurn.text.length);
+    });
+  }, [editingTurn]);
+
+  useEffect(() => {
+    stopPrimedAt.current = null;
+    if (stopPrimeTimer.current) clearTimeout(stopPrimeTimer.current);
+    stopPrimeTimer.current = null;
+    setStopPrimed(false);
+    if (!busy || centered) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Escape"
+        || event.repeat
+        || event.isComposing
+        || event.defaultPrevented
+        || event.metaKey
+        || event.ctrlKey
+        || event.altKey
+        || event.shiftKey
+      ) return;
+
+      const target = event.target as Element | null;
+      if (target?.closest('.xterm, [role="dialog"], [role="menu"], [role="listbox"]')) return;
+
+      const state = useApp.getState();
+      if (
+        state.helpOpen
+        || state.modelPickerOpen
+        || state.effortPickerOpen
+        || state.permissionQueue.length > 0
+        || state.questionQueue.length > 0
+      ) return;
+
+      event.preventDefault();
+      const now = Date.now();
+      if (confirmsEscapeStop(stopPrimedAt.current, now)) {
+        stopPrimedAt.current = null;
+        if (stopPrimeTimer.current) clearTimeout(stopPrimeTimer.current);
+        stopPrimeTimer.current = null;
+        setStopPrimed(false);
+        state.abort();
+        return;
+      }
+
+      stopPrimedAt.current = now;
+      setStopPrimed(true);
+      if (stopPrimeTimer.current) clearTimeout(stopPrimeTimer.current);
+      stopPrimeTimer.current = setTimeout(() => {
+        if (stopPrimedAt.current !== now) return;
+        stopPrimedAt.current = null;
+        stopPrimeTimer.current = null;
+        setStopPrimed(false);
+      }, ESCAPE_STOP_WINDOW_MS);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      stopPrimedAt.current = null;
+      if (stopPrimeTimer.current) clearTimeout(stopPrimeTimer.current);
+      stopPrimeTimer.current = null;
+    };
+  }, [activeId, busy, centered]);
+
   // Auto-size the textarea to its content (up to a cap).
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 220)}px`;
-  }, [input]);
+  }, [value]);
 
   const commandCtx: CommandContext = useMemo(() => {
     const s = useApp.getState();
@@ -91,6 +181,17 @@ export function Composer({ centered = false }: { centered?: boolean }) {
   };
 
   const submit = async () => {
+    if (editingTurn) {
+      const text = editText.trim();
+      if (!text || text === editingTurn.text.trim() || savingEdit || running) return;
+      setSavingEdit(true);
+      try {
+        await editUserTurn(editingTurn.turnId, text);
+      } finally {
+        setSavingEdit(false);
+      }
+      return;
+    }
     const text = input.trim();
     if (!text || busy) return;
     setInput("");
@@ -101,7 +202,18 @@ export function Composer({ centered = false }: { centered?: boolean }) {
     await useApp.getState().send(text);
   };
 
-  const placeholder = preset === "plan" ? "Research a plan (read-only)…" : "Do anything";
+  const placeholder = editingTurn
+    ? "Edit your message…"
+    : preset === "plan"
+      ? "Research a plan (read-only)…"
+      : "Do anything";
+  const canSubmitEdit = Boolean(
+    editingTurn
+    && editText.trim()
+    && editText.trim() !== editingTurn.text.trim()
+    && !savingEdit
+    && !running,
+  );
 
   return (
     <div className={cn("relative w-full", centered && "mx-auto max-w-180")}>
@@ -117,16 +229,42 @@ export function Composer({ centered = false }: { centered?: boolean }) {
           e.preventDefault();
           void submit();
         }}
-        className="app-no-drag flex flex-col gap-2 rounded-2xl border border-white/10 bg-surface-raised p-3 shadow-2xl shadow-black/30 backdrop-blur-xl focus-within:border-white/20"
+        className={cn(
+          "app-no-drag flex flex-col gap-2 rounded-2xl border border-white/10 bg-surface-raised p-3 shadow-2xl shadow-black/30 backdrop-blur-xl focus-within:border-white/20",
+          editingTurn && "border-primary/35",
+        )}
       >
+        {editingTurn ? (
+          <div className="flex items-start gap-3 border-b border-white/8 px-1 pb-2">
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium text-foreground">Editing message</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                This response and every later turn will be removed. Tool side effects are not undone.
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={savingEdit}
+              onClick={() => setEditingTurn(null)}
+              className="shrink-0 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-white/8 hover:text-foreground disabled:opacity-40"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : null}
         <textarea
           ref={textareaRef}
-          value={input}
+          value={value}
           placeholder={placeholder}
           rows={1}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(e) => editingTurn ? setEditText(e.target.value) : setInput(e.target.value)}
           className="max-h-55 w-full resize-none bg-transparent px-1 text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground"
           onKeyDown={(e) => {
+            if (editingTurn && e.key === "Escape") {
+              e.preventDefault();
+              if (!savingEdit) setEditingTurn(null);
+              return;
+            }
             if (showSuggestions) {
               if (e.key === "ArrowDown") {
                 e.preventDefault();
@@ -183,14 +321,41 @@ export function Composer({ centered = false }: { centered?: boolean }) {
           <div className="ml-auto flex items-center gap-1">
             <ModelPicker />
             <EffortPicker />
-            {busy ? (
+            {editingTurn ? (
               <button
-                type="button"
-                onClick={() => useApp.getState().abort()}
-                className="flex size-8 items-center justify-center rounded-full bg-white/15 text-foreground transition-colors hover:bg-white/25"
+                type="submit"
+                disabled={!canSubmitEdit}
+                className="flex size-8 items-center justify-center rounded-full bg-primary text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-40"
+                aria-label="Edit and continue"
+                title="Edit and continue"
               >
-                <Square className="size-3.5 fill-current" />
+                {savingEdit ? <LoaderCircle className="size-4 animate-spin" /> : <Check className="size-4" />}
               </button>
+            ) : busy ? (
+              <div className="relative">
+                {stopPrimed ? (
+                  <div
+                    id="escape-stop-hint"
+                    role="status"
+                    className="absolute right-0 bottom-full mb-2 whitespace-nowrap rounded-md border border-destructive/30 bg-popover/95 px-2 py-1 text-xs font-medium text-destructive shadow-md backdrop-blur-xl"
+                  >
+                    Esc again to stop
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => useApp.getState().abort()}
+                  className={cn(
+                    "flex size-8 items-center justify-center rounded-full bg-white/15 text-foreground transition-[color,background-color,box-shadow] duration-[160ms] ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-white/25",
+                    stopPrimed && "bg-destructive/15 text-destructive ring-2 ring-destructive/70 ring-offset-2 ring-offset-background",
+                  )}
+                  aria-label={stopPrimed ? "Press Escape again to stop" : "Stop response"}
+                  aria-describedby={stopPrimed ? "escape-stop-hint" : undefined}
+                  title={stopPrimed ? "Press Escape again to stop" : "Stop response"}
+                >
+                  <Square className="size-3.5 fill-current" />
+                </button>
+              </div>
             ) : (
               <button
                 type="submit"

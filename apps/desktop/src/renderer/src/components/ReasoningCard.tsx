@@ -4,6 +4,7 @@ import type { TranscriptItem } from "../transcript.ts";
 import { Markdown } from "../chat/Markdown.tsx";
 import { TextShimmer } from "./TextShimmer";
 import { cn } from "@/lib/utils";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
 /**
  * A reasoning/thinking block: a collapsed, dimmed header the user can expand to
@@ -13,6 +14,7 @@ export function ReasoningCard({ item }: { item: Extract<TranscriptItem, { kind: 
   const [open, setOpen] = useState(false);
   const { title, body } = splitSummary(item.text);
   const hasBody = body.trim().length > 0;
+  const shouldReduceMotion = useReducedMotion();
   const header = item.streaming
     ? title ?? "Thinking…"
     : `Thought${title ? ` · ${title}` : ""}${duration(item.durationMs)}`;
@@ -34,11 +36,19 @@ export function ReasoningCard({ item }: { item: Extract<TranscriptItem, { kind: 
           <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} />
         )}
       </button>
-      {open && hasBody && (
-        <div className="mt-2 border-l border-white/10 pl-3 text-sm opacity-70">
-          <Markdown text={body} />
-        </div>
-      )}
+      <AnimatePresence initial={false}>
+        {open && hasBody ? (
+          <motion.div
+            initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, transform: "translateY(-4px)" }}
+            animate={{ opacity: 0.7, transform: "translateY(0px)" }}
+            exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, transform: "translateY(-4px)" }}
+            transition={{ duration: shouldReduceMotion ? 0.12 : 0.16, ease: [0.23, 1, 0.32, 1] }}
+            className="mt-2 border-l border-white/10 pl-3 text-sm"
+          >
+            <Markdown text={body} />
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </section>
   );
 }

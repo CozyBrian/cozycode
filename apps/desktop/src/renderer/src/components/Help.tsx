@@ -11,6 +11,7 @@ import {
 const KEYS: [string, string][] = [
   ["Enter", "send message"],
   ["Shift+Enter", "newline"],
+  ["Esc twice", "stop active response"],
   ["Tab", "toggle plan / build"],
   ["⌘B", "toggle sidebar"],
   ["⌘J", "toggle terminal"],

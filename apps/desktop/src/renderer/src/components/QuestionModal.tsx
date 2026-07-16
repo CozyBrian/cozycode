@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
 interface Props {
   request: QuestionRequest;
@@ -23,6 +24,7 @@ interface Props {
  */
 export function QuestionModal({ request, onAnswer, onReject }: Props) {
   const [step, setStep] = useState(0);
+  const [direction, setDirection] = useState(1);
   // selected[q] = set of chosen option labels; free[q] = typed answer.
   const [selected, setSelected] = useState<Set<string>[]>(() => request.questions.map(() => new Set()));
   const [free, setFree] = useState<string[]>(() => request.questions.map(() => ""));
@@ -31,6 +33,7 @@ export function QuestionModal({ request, onAnswer, onReject }: Props) {
   const question = request.questions[step]!;
   const multiple = question.multiple ?? false;
   const isLast = step === total - 1;
+  const shouldReduceMotion = useReducedMotion();
 
   const toggle = (label: string) => {
     setSelected((prev) => {
@@ -50,6 +53,7 @@ export function QuestionModal({ request, onAnswer, onReject }: Props) {
 
   const advance = () => {
     if (!isLast) {
+      setDirection(1);
       setStep(step + 1);
       return;
     }
@@ -77,50 +81,72 @@ export function QuestionModal({ request, onAnswer, onReject }: Props) {
           <DialogDescription>Answer to continue, or dismiss to decline.</DialogDescription>
         </DialogHeader>
 
-        <div className="flex max-h-[60vh] flex-col gap-2 overflow-auto">
-          <p className="text-sm font-medium text-foreground">{question.question}</p>
-          <div className="flex flex-col gap-1.5">
-            {question.options.map((option) => {
-              const active = selected[step]!.has(option.label);
-              return (
-                <button
-                  key={option.label}
-                  type="button"
-                  onClick={() => toggle(option.label)}
-                  className={cn(
-                    "flex items-start gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors",
-                    active
-                      ? "border-primary/60 bg-primary/10 text-foreground"
-                      : "border-border bg-card/40 text-muted-foreground hover:bg-white/5",
-                  )}
-                >
-                  <span className="mt-0.5 text-primary">
-                    {multiple ? (active ? "☑" : "☐") : active ? "◉" : "○"}
-                  </span>
-                  <span className="flex-1">
-                    {option.label}
-                    {option.description && (
-                      <span className="block text-xs text-muted-foreground">{option.description}</span>
+        <AnimatePresence initial={false} custom={direction} mode="popLayout">
+          <motion.div
+            key={step}
+            custom={direction}
+            variants={{
+              enter: (nextDirection: number) => shouldReduceMotion
+                ? { opacity: 0 }
+                : { opacity: 0, transform: `translateX(${nextDirection * 12}px)` },
+              center: { opacity: 1, transform: "translateX(0px)" },
+              exit: (nextDirection: number) => shouldReduceMotion
+                ? { opacity: 0 }
+                : { opacity: 0, transform: `translateX(${-nextDirection * 12}px)` },
+            }}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            transition={{ duration: shouldReduceMotion ? 0.12 : 0.18, ease: [0.23, 1, 0.32, 1] }}
+            className="flex max-h-[60vh] flex-col gap-2 overflow-auto"
+          >
+            <p className="text-sm font-medium text-foreground">{question.question}</p>
+            <div className="flex flex-col gap-1.5">
+              {question.options.map((option) => {
+                const active = selected[step]!.has(option.label);
+                return (
+                  <button
+                    key={option.label}
+                    type="button"
+                    onClick={() => toggle(option.label)}
+                    className={cn(
+                      "flex items-start gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors",
+                      active
+                        ? "border-primary/60 bg-primary/10 text-foreground"
+                        : "border-border bg-card/40 text-muted-foreground hover:bg-white/5",
                     )}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-          <input
-            value={free[step]}
-            onChange={(e) => setFree((prev) => prev.map((v, i) => (i === step ? e.target.value : v)))}
-            placeholder="Or type your own answer…"
-            className="w-full rounded-lg border border-border bg-card/60 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/50"
-          />
-        </div>
+                  >
+                    <span className="mt-0.5 text-primary">
+                      {multiple ? (active ? "☑" : "☐") : active ? "◉" : "○"}
+                    </span>
+                    <span className="flex-1">
+                      {option.label}
+                      {option.description && (
+                        <span className="block text-xs text-muted-foreground">{option.description}</span>
+                      )}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <input
+              value={free[step]}
+              onChange={(e) => setFree((prev) => prev.map((v, i) => (i === step ? e.target.value : v)))}
+              placeholder="Or type your own answer…"
+              className="w-full rounded-lg border border-border bg-card/60 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/50"
+            />
+          </motion.div>
+        </AnimatePresence>
 
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onReject}>
             Dismiss
           </Button>
           {step > 0 && (
-            <Button variant="outline" onClick={() => setStep(step - 1)}>
+            <Button variant="outline" onClick={() => {
+              setDirection(-1);
+              setStep(step - 1);
+            }}>
               Back
             </Button>
           )}

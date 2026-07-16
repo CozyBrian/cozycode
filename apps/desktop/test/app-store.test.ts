@@ -76,6 +76,7 @@ beforeEach(() => {
     permissionQueue: [],
     questionQueue: [],
     input: "",
+    editingUserTurn: null,
   });
 });
 
@@ -594,6 +595,8 @@ describe("workspace and Settings navigation", () => {
         { id: "turn:two", kind: "user", text: "two", turnId: "two" },
         { id: "assistant:two", kind: "assistant", text: "answer two", streaming: false },
       ],
+      input: "unrelated draft",
+      editingUserTurn: { sessionId: "source", turnId: "two", text: "two" },
       sessionViews: view ? { source: view } : {},
     });
 
@@ -606,8 +609,102 @@ describe("workspace and Settings navigation", () => {
       "changed",
     ]);
     expect(useApp.getState().running).toBe(true);
+    expect(useApp.getState().input).toBe("");
+    expect(useApp.getState().editingUserTurn).toBeNull();
     useApp.getState().applyEvent({ sessionId: "source", event: { type: "session-settled" } });
     expect(useApp.getState().running).toBe(false);
+  });
+
+  test("keeps the normal draft when composer editing is cancelled", () => {
+    useApp.setState({
+      activeId: "source",
+      input: "unrelated draft",
+      editingUserTurn: { sessionId: "source", turnId: "one", text: "one" },
+    });
+
+    useApp.getState().setEditingUserTurn(null);
+
+    expect(useApp.getState().input).toBe("unrelated draft");
+    expect(useApp.getState().editingUserTurn).toBeNull();
+  });
+
+  test("preserves the normal draft and edit state when an edit fails", async () => {
+    installApi({
+      editTurn: async () => ({ ok: false, error: "failed" }),
+      activateSession: async () => snapshot("source"),
+      listSessions: async () => [session("source")],
+    });
+    useApp.setState({
+      activeId: "source",
+      providers,
+      sessions: [session("source")],
+      items: [{ id: "turn:one", kind: "user", text: "one", turnId: "one" }],
+      input: "unrelated draft",
+      editingUserTurn: { sessionId: "source", turnId: "one", text: "one" },
+    });
+
+    const edited = await useApp.getState().editUserTurn("one", "changed");
+
+    expect(edited).toBe(false);
+    expect(useApp.getState().input).toBe("unrelated draft");
+    expect(useApp.getState().editingUserTurn).toEqual({
+      sessionId: "source",
+      turnId: "one",
+      text: "one",
+    });
+  });
+
+  test("cancels composer editing when navigating to another session", async () => {
+    installApi({
+      activateSession: async (id) => snapshot(id),
+      listSessions: async () => [session("source"), session("other")],
+    });
+    useApp.setState({
+      activeId: "source",
+      providers,
+      sessions: [session("source"), session("other")],
+      editingUserTurn: { sessionId: "source", turnId: "one", text: "one" },
+    });
+    useApp.getState().setInput("unrelated draft");
+
+    await useApp.getState().activateSession("other");
+
+    expect(useApp.getState().editingUserTurn).toBeNull();
+    expect(useApp.getState().sessionViews.source?.input).toBe("unrelated draft");
+  });
+
+  test("does not clear another session draft when an edit finishes after navigation", async () => {
+    let finishEdit!: (result: { ok: boolean; error?: string }) => void;
+    const pendingEdit = new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      finishEdit = resolve;
+    });
+    installApi({
+      editTurn: async () => pendingEdit,
+      activateSession: async (id) => snapshot(id),
+      listSessions: async () => [session("source"), session("other")],
+    });
+    useApp.setState({
+      activeId: "source",
+      providers,
+      sessions: [session("source"), session("other")],
+      items: [{ id: "turn:one", kind: "user", text: "one", turnId: "one" }],
+      editingUserTurn: { sessionId: "source", turnId: "one", text: "one" },
+    });
+    useApp.getState().setInput("source draft");
+
+    const edit = useApp.getState().editUserTurn("one", "changed");
+    await Bun.sleep(0);
+    await useApp.getState().activateSession("other");
+    useApp.getState().setInput("other draft");
+    finishEdit({ ok: true });
+    await edit;
+
+    expect(useApp.getState()).toMatchObject({
+      activeId: "other",
+      input: "other draft",
+      editingUserTurn: null,
+    });
+    expect(useApp.getState().sessionViews.source?.input).toBe("");
   });
 
   test("does not restore a failed edit over newer navigation", async () => {

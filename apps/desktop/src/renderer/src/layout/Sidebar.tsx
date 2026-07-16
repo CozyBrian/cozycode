@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useMemo, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, FolderClosed, FolderOpen, Search as SearchIcon, SquarePen, Trash2 } from "lucide-react";
 import { AnimatePresence, motion, Reorder, useReducedMotion } from "motion/react";
 import { newChatWorkspace, useApp, type SettingsSection } from "../store/app-store";
@@ -310,11 +310,7 @@ export function Sidebar() {
         {chats.length > 0 && (
           <div className="mt-3">
             <div className="px-2 pb-1 text-xs font-medium text-muted-foreground">Chats</div>
-            <div className="flex flex-col gap-0.5">
-              {chats.map((s) => (
-                <SidebarSessionRow key={s.id} session={s} now={now} />
-              ))}
-            </div>
+            <SessionRowList sessions={chats} now={now} />
           </div>
         )}
 
@@ -466,12 +462,47 @@ function ProjectGroup({
             transition={{ duration: shouldReduceMotion ? 0.12 : 0.18, ease: [0.23, 1, 0.32, 1] }}
             className="overflow-hidden"
           >
-            <div className="ml-3 flex flex-col gap-0.5 pl-2">
-              {sessions.map((session) => <SidebarSessionRow key={session.id} session={session} now={now} />)}
+            <div className="ml-3 pl-2">
+              <SessionRowList sessions={sessions} now={now} />
               {sessions.length === 0 && <div className="px-2 py-1 text-xs text-muted-foreground">No chats yet</div>}
             </div>
           </motion.div>
         )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function SessionRowList({ sessions, now }: { sessions: SessionMeta[]; now: number }) {
+  const shouldReduceMotion = useReducedMotion();
+  const previousIds = useRef(sessions.map((session) => session.id));
+  const ids = sessions.map((session) => session.id);
+  const idsChanged = ids.length !== previousIds.current.length
+    || ids.some((id) => !previousIds.current.includes(id));
+
+  useEffect(() => {
+    previousIds.current = ids;
+  }, [ids]);
+
+  const hidden = shouldReduceMotion
+    ? { opacity: 0 }
+    : { opacity: 0, transform: "translateY(-4px)" };
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <AnimatePresence initial={false} mode="popLayout">
+        {sessions.map((session) => (
+          <motion.div
+            key={session.id}
+            layout={idsChanged ? "position" : false}
+            initial={hidden}
+            animate={{ opacity: 1, transform: "translateY(0px)" }}
+            exit={hidden}
+            transition={{ duration: shouldReduceMotion ? 0.12 : 0.18, ease: [0.23, 1, 0.32, 1] }}
+          >
+            <SidebarSessionRow session={session} now={now} />
+          </motion.div>
+        ))}
       </AnimatePresence>
     </div>
   );

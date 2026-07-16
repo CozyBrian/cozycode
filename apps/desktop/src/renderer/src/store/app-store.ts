@@ -29,6 +29,7 @@ export interface SelectedDiff {
 }
 
 export interface EditingUserTurn {
+  sessionId: string;
   turnId: string;
   text: string;
 }
@@ -555,6 +556,7 @@ export const useApp = create<AppState>((set, get) => ({
       settingsForwardAvailable: false,
       settingsSection: section,
       contentPanelOpen: false,
+      editingUserTurn: null,
     }),
   closeSettings: () =>
     set((state) =>
@@ -637,20 +639,33 @@ export const useApp = create<AppState>((set, get) => ({
     set((s) => {
       if (s.subagentView === sessionId) return s;
       const subagentHistory = [...s.subagentHistory.slice(0, s.subagentHistoryIndex + 1), sessionId];
-      return { subagentView: sessionId, subagentHistory, subagentHistoryIndex: subagentHistory.length - 1 };
+      return {
+        subagentView: sessionId,
+        subagentHistory,
+        subagentHistoryIndex: subagentHistory.length - 1,
+        editingUserTurn: null,
+      };
     }),
   exitSubagent: () => get().navigateSubagentBack(),
   navigateSubagentBack: () =>
     set((s) => {
       if (s.subagentHistoryIndex === 0) return s;
       const subagentHistoryIndex = s.subagentHistoryIndex - 1;
-      return { subagentHistoryIndex, subagentView: s.subagentHistory[subagentHistoryIndex] ?? null };
+      return {
+        subagentHistoryIndex,
+        subagentView: s.subagentHistory[subagentHistoryIndex] ?? null,
+        editingUserTurn: null,
+      };
     }),
   navigateSubagentForward: () =>
     set((s) => {
       if (s.subagentHistoryIndex === s.subagentHistory.length - 1) return s;
       const subagentHistoryIndex = s.subagentHistoryIndex + 1;
-      return { subagentHistoryIndex, subagentView: s.subagentHistory[subagentHistoryIndex] ?? null };
+      return {
+        subagentHistoryIndex,
+        subagentView: s.subagentHistory[subagentHistoryIndex] ?? null,
+        editingUserTurn: null,
+      };
     }),
   navigateBack: () => {
     if (get().settingsOpen) {
@@ -688,7 +703,12 @@ export const useApp = create<AppState>((set, get) => ({
       return;
     }
     if (settingsForwardAvailable) {
-      set({ settingsOpen: true, settingsForwardAvailable: false, contentPanelOpen: false });
+      set({
+        settingsOpen: true,
+        settingsForwardAvailable: false,
+        contentPanelOpen: false,
+        editingUserTurn: null,
+      });
     }
   },
 
@@ -724,6 +744,7 @@ export const useApp = create<AppState>((set, get) => ({
       subagentHistoryIndex: 0,
       settingsOpen: false,
       settingsForwardAvailable: false,
+      editingUserTurn: null,
       sessionHistory: [...get().sessionHistory.slice(0, get().sessionHistoryIndex + 1), snap.meta.id],
       sessionHistoryIndex: get().sessionHistoryIndex + 1,
     });
@@ -776,6 +797,7 @@ export const useApp = create<AppState>((set, get) => ({
         subagentHistoryIndex: 0,
         settingsOpen: false,
         settingsForwardAvailable: recordHistory ? false : state.settingsForwardAvailable,
+        editingUserTurn: null,
         sessionHistory: nextHistory,
         sessionHistoryIndex: nextHistoryIndex,
       });
@@ -805,6 +827,7 @@ export const useApp = create<AppState>((set, get) => ({
       subagentHistoryIndex: 0,
       settingsOpen: false,
       settingsForwardAvailable: recordHistory ? false : get().settingsForwardAvailable,
+      editingUserTurn: null,
       sessionHistory: nextHistory,
       sessionHistoryIndex: nextHistoryIndex,
     });
@@ -823,6 +846,7 @@ export const useApp = create<AppState>((set, get) => ({
         sessionViews,
         sessionHistory,
         sessionHistoryIndex: sessionHistory.lastIndexOf(state.activeId ?? ""),
+        editingUserTurn: state.editingUserTurn?.sessionId === id ? null : state.editingUserTurn,
       }));
       await get().refreshSessions();
       return;
@@ -833,9 +857,15 @@ export const useApp = create<AppState>((set, get) => ({
         sessionViews,
         sessionHistory,
         sessionHistoryIndex: -1,
+        editingUserTurn: null,
       });
     } else {
-      set((s) => ({ sessionViews, sessionHistory, sessionHistoryIndex: sessionHistory.lastIndexOf(s.activeId ?? "") }));
+      set((s) => ({
+        sessionViews,
+        sessionHistory,
+        sessionHistoryIndex: sessionHistory.lastIndexOf(s.activeId ?? ""),
+        editingUserTurn: s.editingUserTurn?.sessionId === id ? null : s.editingUserTurn,
+      }));
     }
     await get().refreshSessions();
   },
@@ -878,6 +908,7 @@ export const useApp = create<AppState>((set, get) => ({
       sessionHistoryIndex: state.sessionHistoryIndex + 1,
       settingsOpen: false,
       settingsForwardAvailable: false,
+      editingUserTurn: null,
     }));
     await get().refreshSessions();
   },
@@ -913,6 +944,7 @@ export const useApp = create<AppState>((set, get) => ({
       sessionHistoryIndex: state.sessionHistoryIndex + 1,
       settingsOpen: false,
       settingsForwardAvailable: false,
+      editingUserTurn: null,
     }));
     await get().refreshSessions();
   },
@@ -955,7 +987,7 @@ export const useApp = create<AppState>((set, get) => ({
         return false;
       }
       const snap = await window.cozy.activateSession(id);
-      const view = viewFromSnapshot(snap, get());
+      const view = viewFromSnapshot(snap, get(), current.input);
       set((state) => ({
         ...view,
         sessionViews: { ...state.sessionViews, [id]: view },
@@ -963,6 +995,14 @@ export const useApp = create<AppState>((set, get) => ({
       get().systemNote(result.error ?? "Could not edit this message.", true);
       return false;
     }
+    set((state) => ({
+      ...updateView(state, id, (view) => ({ ...view, input: "" })),
+      editingUserTurn:
+        state.editingUserTurn?.sessionId === id
+        && state.editingUserTurn.turnId === turnId
+          ? null
+          : state.editingUserTurn,
+    }));
     await get().refreshSessions();
     return true;
   },
