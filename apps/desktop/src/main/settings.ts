@@ -16,6 +16,7 @@ interface StoredSettings extends Partial<AppSettings> {
 export class SettingsStore {
   private readonly file = join(app.getPath("userData"), "cozycode-settings.json");
   private cache: AppSettings | null | undefined;
+  private saveQueue: Promise<void> = Promise.resolve();
   legacyProviderID = "openai";
 
   private async readStored(): Promise<StoredSettings | null> {
@@ -29,7 +30,7 @@ export class SettingsStore {
   async getPublic(): Promise<AppSettings | null> {
     if (this.cache !== undefined) return this.cache;
     const stored = await this.readStored();
-    if (!stored?.workspaceRoot) return (this.cache = null);
+    if (!stored) return (this.cache = null);
     const roots = workspaceRoots(stored.workspaceRoot, stored.openWorkspaceRoots);
     const settings: AppSettings = {
       workspaceRoot: stored.workspaceRoot,
@@ -38,6 +39,11 @@ export class SettingsStore {
       recentModels: stored.recentModels,
       reasoningEfforts: stored.reasoningEfforts,
       showContextSize: stored.showContextSize,
+      // Existing installations resumed the latest session before this setting
+      // existed; preserve that behavior while new profiles still default empty.
+      startupView: stored.startupView ?? "continue-last-session",
+      collapseProjectGroupsOnStartup: stored.collapseProjectGroupsOnStartup ?? true,
+      lastToggledWorkspaceRoot: stored.lastToggledWorkspaceRoot,
     };
     this.cache = settings;
     // Existing installations had one workspace root. Preserve it as their first
@@ -49,18 +55,26 @@ export class SettingsStore {
   }
 
   async save(input: AppSettingsInput): Promise<AppSettings> {
-    const next: AppSettings = {
-      workspaceRoot: input.workspaceRoot,
-      openWorkspaceRoots: workspaceRoots(input.workspaceRoot, input.openWorkspaceRoots),
-      permissions: input.permissions,
-      recentModels: input.recentModels?.slice(0, 8),
-      reasoningEfforts: input.reasoningEfforts,
-      showContextSize: input.showContextSize,
+    const write = async () => {
+      const next: AppSettings = {
+        workspaceRoot: input.workspaceRoot,
+        openWorkspaceRoots: workspaceRoots(input.workspaceRoot, input.openWorkspaceRoots),
+        permissions: input.permissions,
+        recentModels: input.recentModels?.slice(0, 8),
+        reasoningEfforts: input.reasoningEfforts,
+        showContextSize: input.showContextSize,
+        startupView: input.startupView ?? "empty",
+        collapseProjectGroupsOnStartup: input.collapseProjectGroupsOnStartup ?? true,
+        lastToggledWorkspaceRoot: input.lastToggledWorkspaceRoot,
+      };
+      await mkdir(app.getPath("userData"), { recursive: true });
+      await writeFile(this.file, JSON.stringify(next, null, 2), "utf8");
+      this.cache = next;
+      return next;
     };
-    await mkdir(app.getPath("userData"), { recursive: true });
-    await writeFile(this.file, JSON.stringify(next, null, 2), "utf8");
-    this.cache = next;
-    return next;
+    const pending = this.saveQueue.then(write, write);
+    this.saveQueue = pending.then(() => undefined, () => undefined);
+    return pending;
   }
 
   async migrateProviderCredentials(registry: ProviderRegistry, auth: AuthStore): Promise<void> {

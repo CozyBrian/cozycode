@@ -28,9 +28,11 @@ interface SessionRow {
 }
 
 interface RecordRow {
+  seq: number;
   at: number;
   kind: "user" | "event";
   payload_json: string;
+  turn_id: string | null;
 }
 
 const LEGACY_MIGRATION_KEY = "legacy_import_v1";
@@ -86,10 +88,22 @@ export class SessionStore {
         messages_json TEXT NOT NULL,
         updated_at INTEGER NOT NULL
       ) STRICT;
-      PRAGMA user_version = 1;
     `);
+    const recordColumns = this.db.prepare("PRAGMA table_info(records)").all() as unknown as Array<{ name: string }>;
+    if (!recordColumns.some((column) => column.name === "turn_id")) {
+      this.db.exec("ALTER TABLE records ADD COLUMN turn_id TEXT");
+    }
+    const missingTurnIDs = this.db.prepare(
+      "SELECT seq FROM records WHERE kind = 'user' AND turn_id IS NULL",
+    ).all() as unknown as Array<{ seq: number }>;
+    const backfillTurnID = this.db.prepare("UPDATE records SET turn_id = ? WHERE seq = ?");
+    this.transaction(() => {
+      for (const row of missingTurnIDs) backfillTurnID.run(randomUUID(), row.seq);
+    });
+    this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS records_turn_idx ON records(turn_id) WHERE turn_id IS NOT NULL");
+    this.db.exec("PRAGMA user_version = 2");
     this.insertRecord = this.db.prepare(
-      "INSERT INTO records (session_id, at, kind, payload_json) VALUES (?, ?, ?, ?)",
+      "INSERT INTO records (session_id, at, kind, payload_json, turn_id) VALUES (?, ?, ?, ?, ?)",
     );
     this.migrateLegacy(dir);
   }
@@ -164,16 +178,17 @@ export class SessionStore {
     this.db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
   }
 
-  appendUser(id: string, text: string): void {
+  appendUser(id: string, text: string, turnId: string = randomUUID()): string {
     this.flushDeltas(id);
-    this.insertRecord.run(id, Date.now(), "user", JSON.stringify(text));
+    this.insertRecord.run(id, Date.now(), "user", JSON.stringify(text), turnId);
+    return turnId;
   }
 
   /** Persist an accepted user turn and its list metadata atomically. */
-  appendUserTurn(id: string, text: string, updatedAt: number): number {
+  appendUserTurn(id: string, text: string, updatedAt: number, turnId: string = randomUUID()): number {
     this.flushDeltas(id);
     return this.transaction(() => {
-      this.insertRecord.run(id, updatedAt, "user", JSON.stringify(text));
+      this.insertRecord.run(id, updatedAt, "user", JSON.stringify(text), turnId);
       this.db.prepare(`
         UPDATE sessions
         SET message_count = message_count + 1, updated_at = ?
@@ -199,18 +214,18 @@ export class SessionStore {
       return;
     }
     this.flushDeltas(id);
-    this.insertRecord.run(id, Date.now(), "event", JSON.stringify(event));
+    this.insertRecord.run(id, Date.now(), "event", JSON.stringify(event), null);
   }
 
-  async readRecords(id: string): Promise<SessionRecord[]> {
+  async readRecords(id: string, includeInterrupted = true): Promise<SessionRecord[]> {
     this.flushDeltas(id);
     const rows = this.db
-      .prepare("SELECT at, kind, payload_json FROM records WHERE session_id = ? ORDER BY seq")
+      .prepare("SELECT seq, at, kind, payload_json, turn_id FROM records WHERE session_id = ? ORDER BY seq")
       .all(id) as unknown as RecordRow[];
     const records = rows.flatMap((row): SessionRecord[] => {
       try {
         return row.kind === "user"
-          ? [{ at: row.at, kind: "user", text: JSON.parse(row.payload_json) as string }]
+          ? [{ at: row.at, kind: "user", text: JSON.parse(row.payload_json) as string, turnId: row.turn_id! }]
           : [{ at: row.at, kind: "event", event: JSON.parse(row.payload_json) as SessionEvent }];
       } catch {
         return [];
@@ -218,7 +233,7 @@ export class SessionStore {
     });
     const last = records.at(-1);
     const lastEvent = last?.kind === "event" ? last.event.type : undefined;
-    if (records.length && lastEvent !== "finish" && lastEvent !== "error") {
+    if (includeInterrupted && records.length && lastEvent !== "finish" && lastEvent !== "error") {
       records.push({ at: Date.now(), kind: "event", event: { type: "finish", reason: "interrupted" } });
     }
     return records;
@@ -245,6 +260,94 @@ export class SessionStore {
     `).run(id, JSON.stringify(messages), Date.now());
   }
 
+  async forkSession(sourceID: string, now: number): Promise<SessionMeta> {
+    this.flushDeltas(sourceID);
+    const source = await this.get(sourceID);
+    if (!source) throw new Error(`Unknown session: ${sourceID}`);
+    const records = this.rawRecords(sourceID);
+    const history = await this.readHistory(sourceID);
+    const replayUsers = records.filter((record) => record.kind === "user").length;
+    const historyUsers = (history ?? []).filter((message) => message.role === "user").length;
+    if (replayUsers !== historyUsers) {
+      throw new Error("This session's saved history cannot be forked safely.");
+    }
+    const fork: SessionMeta = {
+      ...source,
+      id: randomUUID(),
+      title: `${source.title} (fork)`,
+      titleEdited: true,
+      createdAt: now,
+      updatedAt: now,
+      parentID: null,
+      agent: undefined,
+    };
+    this.transaction(() => {
+      this.insertSession(fork);
+      this.copyRecords(fork.id, records);
+      if (history) this.writeHistoryRow(fork.id, history, now);
+    });
+    return fork;
+  }
+
+  async forkFromTurn(sourceID: string, turnId: string, now: number): Promise<SessionMeta> {
+    this.flushDeltas(sourceID);
+    const source = await this.get(sourceID);
+    if (!source) throw new Error(`Unknown session: ${sourceID}`);
+    const boundary = await this.turnBoundary(sourceID, turnId);
+    const fork: SessionMeta = {
+      ...source,
+      id: randomUUID(),
+      title: `${source.title} (fork)`,
+      titleEdited: true,
+      createdAt: now,
+      updatedAt: now,
+      messageCount: boundary.turnOrdinal,
+      parentID: null,
+      agent: undefined,
+    };
+    this.transaction(() => {
+      this.insertSession(fork);
+      this.copyRecords(fork.id, boundary.recordsBefore);
+      this.writeHistoryRow(fork.id, boundary.historyBefore, now);
+    });
+    return fork;
+  }
+
+  async rewriteTurn(
+    sessionID: string,
+    turnId: string,
+    replacementTurnId: string,
+    text: string,
+    now: number,
+  ): Promise<SessionMeta> {
+    this.flushDeltas(sessionID);
+    const meta = await this.get(sessionID);
+    if (!meta) throw new Error(`Unknown session: ${sessionID}`);
+    const boundary = await this.turnBoundary(sessionID, turnId);
+    this.transaction(() => {
+      this.db.prepare("DELETE FROM records WHERE session_id = ? AND seq >= ?").run(
+        sessionID,
+        boundary.targetSeq,
+      );
+      this.writeHistoryRow(sessionID, boundary.historyBefore, now);
+      this.insertRecord.run(sessionID, now, "user", JSON.stringify(text), replacementTurnId);
+      const title = boundary.turnOrdinal === 0 && !meta.titleEdited
+        ? `New session - ${new Date(now).toISOString()}`
+        : meta.title;
+      this.db.prepare(`
+        UPDATE sessions SET title = ?, message_count = ?, updated_at = ? WHERE id = ?
+      `).run(title, boundary.turnOrdinal + 1, now, sessionID);
+    });
+    return {
+      ...meta,
+      title: boundary.turnOrdinal === 0 && !meta.titleEdited
+        ? `New session - ${new Date(now).toISOString()}`
+        : meta.title,
+      messageCount: boundary.turnOrdinal + 1,
+      updatedAt: now,
+    };
+  }
+
   async applyGeneratedTitle(id: string, title: string): Promise<boolean> {
     const result = this.db.prepare(`
       UPDATE sessions SET title = ?
@@ -265,7 +368,58 @@ export class SessionStore {
     const text = this.deltaBuffers.get(id);
     if (!text) return;
     this.deltaBuffers.delete(id);
-    this.insertRecord.run(id, Date.now(), "event", JSON.stringify({ type: "text-delta", text }));
+    this.insertRecord.run(id, Date.now(), "event", JSON.stringify({ type: "text-delta", text }), null);
+  }
+
+  private rawRecords(id: string): RecordRow[] {
+    return this.db.prepare(
+      "SELECT seq, at, kind, payload_json, turn_id FROM records WHERE session_id = ? ORDER BY seq",
+    ).all(id) as unknown as RecordRow[];
+  }
+
+  private copyRecords(destinationID: string, records: RecordRow[]): void {
+    for (const record of records) {
+      this.insertRecord.run(
+        destinationID,
+        record.at,
+        record.kind,
+        record.payload_json,
+        record.kind === "user" ? randomUUID() : null,
+      );
+    }
+  }
+
+  private writeHistoryRow(id: string, messages: ModelMessage[], updatedAt: number): void {
+    this.db.prepare(`
+      INSERT INTO histories (session_id, messages_json, updated_at) VALUES (?, ?, ?)
+      ON CONFLICT(session_id) DO UPDATE SET
+        messages_json = excluded.messages_json,
+        updated_at = excluded.updated_at
+    `).run(id, JSON.stringify(messages), updatedAt);
+  }
+
+  private async turnBoundary(sessionID: string, turnId: string): Promise<{
+    targetSeq: number;
+    turnOrdinal: number;
+    recordsBefore: RecordRow[];
+    historyBefore: ModelMessage[];
+  }> {
+    const records = this.rawRecords(sessionID);
+    const userRecords = records.filter((record) => record.kind === "user");
+    const turnOrdinal = userRecords.findIndex((record) => record.turn_id === turnId);
+    if (turnOrdinal < 0) throw new Error("Unknown user turn.");
+    const history = await this.readHistory(sessionID) ?? [];
+    const userIndexes = history.flatMap((message, index) => message.role === "user" ? [index] : []);
+    const compatible = userRecords.length === userIndexes.length ||
+      (userRecords.length === userIndexes.length + 1 && turnOrdinal === userRecords.length - 1);
+    if (!compatible) throw new Error("This session's saved history cannot be edited safely.");
+    const historyCutoff = userIndexes[turnOrdinal] ?? history.length;
+    return {
+      targetSeq: userRecords[turnOrdinal]!.seq,
+      turnOrdinal,
+      recordsBefore: records.filter((record) => record.seq < userRecords[turnOrdinal]!.seq),
+      historyBefore: history.slice(0, historyCutoff),
+    };
   }
 
   private insertSession(meta: SessionMeta): void {
@@ -313,7 +467,7 @@ export class SessionStore {
     try {
       this.transaction(() => {
       const insertRecord = this.db.prepare(
-        "INSERT INTO records (session_id, at, kind, payload_json) VALUES (?, ?, ?, ?)",
+        "INSERT INTO records (session_id, at, kind, payload_json, turn_id) VALUES (?, ?, ?, ?, ?)",
       );
       const insertHistory = this.db.prepare(
         "INSERT OR REPLACE INTO histories (session_id, messages_json, updated_at) VALUES (?, ?, ?)",
@@ -357,6 +511,7 @@ export class SessionStore {
                 record.at,
                 record.kind,
                 JSON.stringify(record.kind === "user" ? record.text : record.event),
+                record.kind === "user" ? randomUUID() : null,
               );
             }
             this.markMigrationStep(recordsKey);
@@ -526,6 +681,7 @@ function validSessionEvent(value: unknown, depth = 0): value is SessionEvent {
     case "subagent-event": return string("toolCallId") && string("sessionId") && validSessionEvent(event.event, depth + 1);
     case "subagent-finish": return string("toolCallId") && string("sessionId") && string("result")
       && (event.isError === undefined || typeof event.isError === "boolean");
+    case "session-settled": return true;
     case "finish": return string("reason") && (event.usage === undefined || Boolean(event.usage && typeof event.usage === "object"));
     default: return false;
   }

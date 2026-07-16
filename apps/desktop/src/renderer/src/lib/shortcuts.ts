@@ -20,6 +20,11 @@ export function useGlobalShortcuts(): void {
         if (efforts.length > 0) s.setEffort(cycleEffort(s.effort, efforts));
         return;
       }
+      if (key === "n" && e.shiftKey) {
+        e.preventDefault();
+        void s.createSession(null);
+        return;
+      }
       // The remaining shortcuts are single-modifier; ignore shifted variants so
       // shifted combos don't double-fire.
       if (e.shiftKey) return;

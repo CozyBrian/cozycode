@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { Download, MessageSquare, Pencil, Trash2 } from "lucide-react";
+import { Download, GitFork, MessageSquare, Pencil, Trash2 } from "lucide-react";
 import type { SessionMeta } from "../../../shared/ipc.ts";
-import { isSessionRunningInBackground, useApp } from "../store/app-store";
+import { useApp } from "../store/app-store";
 import { relativeTime } from "../lib/relative-time";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
@@ -12,11 +12,25 @@ export function SidebarSessionRow({ session, now }: { session: SessionMeta; now:
   const rename = useApp((s) => s.renameSession);
   const remove = useApp((s) => s.deleteSession);
   const exportSession = useApp((s) => s.exportSession);
-  const runningInBackground = useApp((s) => isSessionRunningInBackground(s, session.id));
+  const forkSession = useApp((s) => s.forkSession);
+  const running = useApp((s) => Boolean(s.sessionViews[session.id]?.running));
+  const indicator = useApp((s) => {
+    if (s.activeId === session.id) return null;
+    const view = s.sessionViews[session.id];
+    if (view?.backgroundComplete) return "complete";
+    if (view?.running) return "running";
+    return null;
+  });
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(session.title);
 
   const active = session.id === activeId;
+  const statusLabel =
+    indicator === "running"
+      ? `${session.title}, running in background`
+      : indicator === "complete"
+        ? `${session.title}, completed in background`
+        : session.title;
 
   const commit = () => {
     setEditing(false);
@@ -32,9 +46,10 @@ export function SidebarSessionRow({ session, now }: { session: SessionMeta; now:
           className={cn(
             "group relative flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-sidebar-foreground/80 transition-colors",
             active ? "bg-sidebar-accent text-sidebar-foreground" : "hover:bg-white/5",
-            runningInBackground && "background-session-glow",
+            indicator === "running" && "background-session-outline",
+            indicator === "complete" && "completed-session-outline",
           )}
-          aria-label={runningInBackground ? `${session.title}, running in background` : session.title}
+          aria-label={statusLabel}
           onClick={() => !editing && void activate(session.id)}
         >
           <MessageSquare className="size-3.5 shrink-0 text-muted-foreground" />
@@ -57,7 +72,11 @@ export function SidebarSessionRow({ session, now }: { session: SessionMeta; now:
           ) : (
             <>
               <span className="min-w-0 flex-1 truncate">{session.title}</span>
-              {runningInBackground && <span className="sr-only">Running in background</span>}
+              {indicator && (
+                <span className="sr-only">
+                  {indicator === "running" ? "Running in background" : "Completed in background"}
+                </span>
+              )}
               <span className="shrink-0 text-xs text-muted-foreground">
                 {relativeTime(session.updatedAt, now)}
               </span>
@@ -76,6 +95,9 @@ export function SidebarSessionRow({ session, now }: { session: SessionMeta; now:
         </ContextMenuItem>
         <ContextMenuItem onSelect={() => void exportSession(session.id)}>
           <Download className="size-4" /> Export Markdown
+        </ContextMenuItem>
+        <ContextMenuItem disabled={running} onSelect={() => void forkSession(session.id)}>
+          <GitFork className="size-4" /> Fork session
         </ContextMenuItem>
         <ContextMenuItem variant="destructive" onSelect={() => void remove(session.id)}>
           <Trash2 className="size-4" /> Delete

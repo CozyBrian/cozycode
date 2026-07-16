@@ -28,6 +28,11 @@ export interface SelectedDiff {
   source: "chat" | "git";
 }
 
+export interface EditingUserTurn {
+  turnId: string;
+  text: string;
+}
+
 /** Running token totals for the active session. */
 export interface SessionUsage {
   inputTokens: number;
@@ -42,6 +47,8 @@ export interface SessionViewState {
   /** The addressed send promise is still settling in the main process. */
   running: boolean;
   busy: boolean;
+  /** A completed background turn has not been viewed yet. */
+  backgroundComplete: boolean;
   turnUsage: TokenUsage | null;
   sessionUsage: SessionUsage;
   preset: PermissionPreset;
@@ -57,6 +64,20 @@ export function isSessionRunningInBackground(
   sessionId: string,
 ): boolean {
   return Boolean(state.sessionViews[sessionId]?.running) && state.activeId !== sessionId;
+}
+
+export function newChatWorkspace(
+  state: Pick<AppState, "settings" | "sessions">,
+): string | null {
+  const last = state.settings?.lastToggledWorkspaceRoot;
+  if (
+    last &&
+    (state.settings?.openWorkspaceRoots?.includes(last) ||
+      state.sessions.some((session) => session.workspaceRoot === last))
+  ) {
+    return last;
+  }
+  return state.settings?.workspaceRoot ?? null;
 }
 import { effortsForModel, modelKey, resolveEffort } from "@cozycode/commands";
 import { foldEvent, userItem, type TranscriptItem } from "../transcript.ts";
@@ -87,6 +108,7 @@ export interface AppState {
   helpOpen: boolean;
   modelPickerOpen: boolean;
   effortPickerOpen: boolean;
+  editingUserTurn: EditingUserTurn | null;
 
   // sessions
   sessions: SessionMeta[];
@@ -108,6 +130,7 @@ export interface AppState {
   /** The selected session still has a main-process send promise in flight. */
   running: boolean;
   busy: boolean;
+  backgroundComplete: boolean;
   /** Usage from the most recent finished turn (for the context meter). */
   turnUsage: TokenUsage | null;
   /** Accumulated usage across the active session's turns. */
@@ -162,6 +185,7 @@ export interface AppState {
   openWorkspace(): Promise<void>;
   removeWorkspace(root: string): Promise<void>;
   reorderWorkspaces(roots: string[]): Promise<void>;
+  setLastToggledWorkspace(root: string): Promise<void>;
 
   viewSubagent(sessionId: string): void;
   exitSubagent(): void;
@@ -171,11 +195,15 @@ export interface AppState {
   navigateForward(): void;
 
   refreshSessions(): Promise<void>;
-  createSession(workspaceRoot?: string | null): Promise<void>;
+  createSession(workspaceRoot?: string | null): Promise<string | null>;
   activateSession(id: string, recordHistory?: boolean, historyIndex?: number): Promise<void>;
   deleteSession(id: string): Promise<void>;
   renameSession(id: string, title: string): Promise<void>;
   exportSession(id: string): Promise<void>;
+  forkSession(id: string): Promise<void>;
+  forkFromTurn(turnId: string, text: string): Promise<void>;
+  setEditingUserTurn(turn: EditingUserTurn | null): void;
+  editUserTurn(turnId: string, text: string): Promise<boolean>;
 
   send(text: string): Promise<void>;
   abort(): void;
@@ -220,13 +248,38 @@ function storedEffort(
 function replayRecords(records: SessionRecord[]): TranscriptItem[] {
   let items: TranscriptItem[] = [];
   for (const rec of records) {
-    if (rec.kind === "user") items = [...items, userItem(rec.text)];
+    if (rec.kind === "user") items = [...items, userItem(rec.text, rec.turnId)];
     else items = foldEvent(items, rec.event);
   }
   return items;
 }
 
 const EMPTY_USAGE: SessionUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+
+function emptyActiveState(
+  state: Pick<AppState, "providers" | "settings" | "recentModels">,
+): Partial<AppState> {
+  const model = state.providers?.defaultModel ?? state.recentModels[0] ?? null;
+  return {
+    activeId: null,
+    revision: 0,
+    items: [],
+    running: false,
+    busy: false,
+    backgroundComplete: false,
+    turnUsage: null,
+    sessionUsage: EMPTY_USAGE,
+    preset: "ask",
+    model,
+    effort: storedEffort(state, model),
+    permissionQueue: [],
+    questionQueue: [],
+    input: "",
+    subagentView: null,
+    subagentHistory: [null],
+    subagentHistoryIndex: 0,
+  };
+}
 
 /** Fold a turn's usage into a running total (missing fields count as zero). */
 function addUsage(total: SessionUsage, usage: TokenUsage | undefined): SessionUsage {
@@ -270,6 +323,7 @@ function viewFromSnapshot(
     items: replayRecords(snapshot.records),
     running: snapshot.running,
     busy: snapshot.running,
+    backgroundComplete: false,
     ...sumUsage(snapshot.records),
     preset: snapshot.meta.preset,
     model: snapshot.meta.model,
@@ -286,6 +340,7 @@ function activeView(state: AppState): SessionViewState {
     items: state.items,
     running: state.running,
     busy: state.busy,
+    backgroundComplete: state.backgroundComplete,
     turnUsage: state.turnUsage,
     sessionUsage: state.sessionUsage,
     preset: state.preset,
@@ -322,6 +377,9 @@ function foldViewEvent(view: SessionViewState, event: SessionEvent): SessionView
   } else if (event.type === "subagent-event" && event.event.type === "finish") {
     next.sessionUsage = addUsage(next.sessionUsage, event.event.usage);
   } else if (event.type === "error") {
+    next.busy = false;
+  } else if (event.type === "session-settled") {
+    next.running = false;
     next.busy = false;
   }
   return next;
@@ -360,6 +418,7 @@ export const useApp = create<AppState>((set, get) => ({
   helpOpen: false,
   modelPickerOpen: false,
   effortPickerOpen: false,
+  editingUserTurn: null,
 
   sessions: [],
   activeId: null,
@@ -374,6 +433,7 @@ export const useApp = create<AppState>((set, get) => ({
   items: [],
   running: false,
   busy: false,
+  backgroundComplete: false,
   turnUsage: null,
   sessionUsage: EMPTY_USAGE,
   preset: "ask",
@@ -397,10 +457,25 @@ export const useApp = create<AppState>((set, get) => ({
     const ready = providers.connected.length > 0;
     const sessions = await window.cozy.listSessions();
     if (ready) {
-      // Activate (or create) the most-recent session.
-      const snap = sessions[0]
-        ? await window.cozy.activateSession(sessions[0].id)
-        : await window.cozy.createSession();
+      const continueSession = settings?.startupView === "continue-last-session" && sessions[0];
+      if (!continueSession) {
+        set({
+          ...emptyActiveState({ settings, providers, recentModels: settings?.recentModels ?? [] }),
+          settings,
+          providers,
+          recentModels: settings?.recentModels ?? [],
+          sessions,
+          loaded: true,
+          settingsOpen: false,
+          settingsForwardAvailable: false,
+          settingsSection: "general",
+          sessionViews: {},
+          sessionHistory: [],
+          sessionHistoryIndex: -1,
+        });
+        return;
+      }
+      const snap = await window.cozy.activateSession(continueSession.id);
       const view = viewFromSnapshot(snap, { settings, providers });
       set({
         activeId: snap.meta.id,
@@ -433,7 +508,18 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   applyEvent({ sessionId, event }) {
-    set((state) => updateView(state, sessionId, (view) => foldViewEvent(view, event)));
+    set((state) =>
+      updateView(state, sessionId, (view) => {
+        const next = foldViewEvent(view, event);
+        if (
+          ((event.type === "finish" && event.reason !== "abort") || event.type === "error") &&
+          state.activeId !== sessionId
+        ) {
+          next.backgroundComplete = true;
+        }
+        return next;
+      }),
+    );
   },
 
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
@@ -472,7 +558,7 @@ export const useApp = create<AppState>((set, get) => ({
     }),
   closeSettings: () =>
     set((state) =>
-      state.activeId
+      state.providers?.connected.length
         ? { settingsOpen: false, settingsForwardAvailable: true }
         : state,
     ),
@@ -508,7 +594,10 @@ export const useApp = create<AppState>((set, get) => ({
   async removeWorkspace(root) {
     const settings = get().settings;
     if (!settings) return;
-    const openWorkspaceRoots = (settings.openWorkspaceRoots ?? [settings.workspaceRoot]).filter((item) => item !== root);
+    const openWorkspaceRoots = workspaceRoots(
+      settings.workspaceRoot,
+      settings.openWorkspaceRoots,
+    ).filter((item) => item !== root);
     // Keep one project as the default target for global New chat.
     if (openWorkspaceRoots.length === 0) return;
     const next = {
@@ -528,6 +617,18 @@ export const useApp = create<AppState>((set, get) => ({
     const next = { ...settings, openWorkspaceRoots: roots };
     set({ settings: next });
     await window.cozy.saveSettings(next);
+  },
+
+  async setLastToggledWorkspace(root) {
+    const current = get().settings ?? {};
+    if (current.lastToggledWorkspaceRoot === root) return;
+    const next = {
+      ...current,
+      lastToggledWorkspaceRoot: root,
+    };
+    set({ settings: next });
+    const saved = await window.cozy.saveSettings(next);
+    if (get().settings?.lastToggledWorkspaceRoot === root) set({ settings: saved });
   },
 
   // Read-only drill-in into a running/finished subagent. Does NOT touch the live
@@ -596,18 +697,24 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   async createSession(workspaceRoot) {
-    const root = workspaceRoot === undefined ? (get().settings?.workspaceRoot ?? null) : workspaceRoot;
+    const root = workspaceRoot === undefined ? newChatWorkspace(get()) : workspaceRoot;
     const empty = emptySessionForWorkspace(get().sessions, root);
     if (empty) {
       if (empty.id !== get().activeId) await get().activateSession(empty.id);
       else set({ settingsOpen: false, settingsForwardAvailable: false });
-      return;
+      return get().activeId === empty.id ? empty.id : null;
     }
 
     const request = ++activationSequence;
     const snap = await window.cozy.createSession({ workspaceRoot: root });
-    if (request !== activationSequence) return;
     const view = viewFromSnapshot(snap, get());
+    if (request !== activationSequence) {
+      set((state) => ({
+        sessionViews: { ...state.sessionViews, [snap.meta.id]: view },
+      }));
+      await get().refreshSessions();
+      return snap.meta.id;
+    }
     set({
       activeId: snap.meta.id,
       ...view,
@@ -622,11 +729,22 @@ export const useApp = create<AppState>((set, get) => ({
     });
     await updateLastWorkspace(get, set, snap.meta.workspaceRoot);
     await get().refreshSessions();
+    return snap.meta.id;
   },
 
   async activateSession(id, recordHistory = true, historyIndex) {
     if (id === get().activeId) {
-      set({ settingsOpen: false, settingsForwardAvailable: false });
+      set((state) => ({
+        settingsOpen: false,
+        settingsForwardAvailable: false,
+        backgroundComplete: false,
+        sessionViews: state.sessionViews[id]
+          ? {
+              ...state.sessionViews,
+              [id]: { ...state.sessionViews[id], backgroundComplete: false },
+            }
+          : state.sessionViews,
+      }));
       return;
     }
     const request = ++activationSequence;
@@ -638,7 +756,7 @@ export const useApp = create<AppState>((set, get) => ({
     const nextHistoryIndex = recordHistory ? nextHistory.length - 1 : (historyIndex ?? sessionHistory.indexOf(id));
     const cached = state.sessionViews[id];
     const meta = state.sessions.find((session) => session.id === id);
-    const optimisticView = cached ?? (meta
+    const optimisticView = cached ? { ...cached, backgroundComplete: false } : (meta
       ? viewFromSnapshot({
           meta,
           records: [],
@@ -694,23 +812,27 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   async deleteSession(id) {
-    ++activationSequence;
-    const snap = await window.cozy.deleteSession(id);
+    const request = ++activationSequence;
+    const wasActive = get().activeId === id;
+    await window.cozy.deleteSession(id);
     const sessionHistory = get().sessionHistory.filter((sessionId) => sessionId !== id);
     const sessionViews = { ...get().sessionViews };
     delete sessionViews[id];
-    if (snap) {
-      if (!sessionHistory.includes(snap.meta.id)) sessionHistory.push(snap.meta.id);
-      const view = get().sessionViews[snap.meta.id] ?? viewFromSnapshot(snap, get());
-      set({
-        activeId: snap.meta.id,
-        ...view,
-        sessionViews: { ...sessionViews, [snap.meta.id]: view },
-        subagentView: null,
-        subagentHistory: [null],
-        subagentHistoryIndex: 0,
+    if (request !== activationSequence) {
+      set((state) => ({
+        sessionViews,
         sessionHistory,
-        sessionHistoryIndex: sessionHistory.lastIndexOf(snap.meta.id),
+        sessionHistoryIndex: sessionHistory.lastIndexOf(state.activeId ?? ""),
+      }));
+      await get().refreshSessions();
+      return;
+    }
+    if (wasActive) {
+      set({
+        ...emptyActiveState(get()),
+        sessionViews,
+        sessionHistory,
+        sessionHistoryIndex: -1,
       });
     } else {
       set((s) => ({ sessionViews, sessionHistory, sessionHistoryIndex: sessionHistory.lastIndexOf(s.activeId ?? "") }));
@@ -727,16 +849,159 @@ export const useApp = create<AppState>((set, get) => ({
     await window.cozy.exportSession(id);
   },
 
-  async send(text) {
+  async forkSession(id) {
+    const request = ++activationSequence;
+    let snap: SessionSnapshot;
+    try {
+      snap = await window.cozy.forkSession(id);
+    } catch (error) {
+      get().systemNote(error instanceof Error ? error.message : String(error), true);
+      return;
+    }
+    const view = viewFromSnapshot(snap, get());
+    if (request !== activationSequence) {
+      set((state) => ({ sessionViews: { ...state.sessionViews, [snap.meta.id]: view } }));
+      await get().refreshSessions();
+      return;
+    }
+    set((state) => ({
+      activeId: snap.meta.id,
+      ...view,
+      sessionViews: { ...state.sessionViews, [snap.meta.id]: view },
+      subagentView: null,
+      subagentHistory: [null],
+      subagentHistoryIndex: 0,
+      sessionHistory: [
+        ...state.sessionHistory.slice(0, state.sessionHistoryIndex + 1),
+        snap.meta.id,
+      ],
+      sessionHistoryIndex: state.sessionHistoryIndex + 1,
+      settingsOpen: false,
+      settingsForwardAvailable: false,
+    }));
+    await get().refreshSessions();
+  },
+
+  async forkFromTurn(turnId, text) {
     const id = get().activeId;
-    if (!id || !text.trim() || get().sessionViews[id]?.running) return;
+    if (!id || get().running) return;
+    const request = ++activationSequence;
+    let snap: SessionSnapshot;
+    try {
+      snap = await window.cozy.forkFromTurn(id, turnId);
+    } catch (error) {
+      get().systemNote(error instanceof Error ? error.message : String(error), true);
+      return;
+    }
+    const view = { ...viewFromSnapshot(snap, get(), text), input: text };
+    if (request !== activationSequence) {
+      set((state) => ({ sessionViews: { ...state.sessionViews, [snap.meta.id]: view } }));
+      await get().refreshSessions();
+      return;
+    }
+    set((state) => ({
+      activeId: snap.meta.id,
+      ...view,
+      sessionViews: { ...state.sessionViews, [snap.meta.id]: view },
+      subagentView: null,
+      subagentHistory: [null],
+      subagentHistoryIndex: 0,
+      sessionHistory: [
+        ...state.sessionHistory.slice(0, state.sessionHistoryIndex + 1),
+        snap.meta.id,
+      ],
+      sessionHistoryIndex: state.sessionHistoryIndex + 1,
+      settingsOpen: false,
+      settingsForwardAvailable: false,
+    }));
+    await get().refreshSessions();
+  },
+
+  setEditingUserTurn: (turn) => set({ editingUserTurn: turn }),
+
+  async editUserTurn(turnId, text) {
+    const id = get().activeId;
+    if (!id || get().running || !text.trim()) return false;
+    const request = ++activationSequence;
+    const current = get().sessionViews[id] ?? activeView(get());
+    const index = current.items.findIndex(
+      (item) => item.kind === "user" && item.turnId === turnId,
+    );
+    if (index < 0) return false;
+    const replacementTurnId = crypto.randomUUID();
     set((state) => updateView(state, id, (view) => ({
       ...view,
-      items: [...view.items, userItem(text)],
+      items: [...view.items.slice(0, index), userItem(text.trim(), replacementTurnId)],
+      running: true,
+      busy: true,
+      turnUsage: null,
+      permissionQueue: [],
+      questionQueue: [],
+    })));
+    const result = await window.cozy.editTurn({
+      sessionId: id,
+      turnId,
+      replacementTurnId,
+      text: text.trim(),
+    });
+    if (!result.ok) {
+      if (request !== activationSequence || get().activeId !== id) {
+        set((state) => {
+          const sessionViews = { ...state.sessionViews };
+          delete sessionViews[id];
+          return { sessionViews };
+        });
+        await get().refreshSessions();
+        return false;
+      }
+      const snap = await window.cozy.activateSession(id);
+      const view = viewFromSnapshot(snap, get());
+      set((state) => ({
+        ...view,
+        sessionViews: { ...state.sessionViews, [id]: view },
+      }));
+      get().systemNote(result.error ?? "Could not edit this message.", true);
+      return false;
+    }
+    await get().refreshSessions();
+    return true;
+  },
+
+  async send(text) {
+    let id = get().activeId;
+    const pendingConfiguration = id
+      ? null
+      : { model: get().model, preset: get().preset, effort: get().effort };
+    if (!id) {
+      id = await get().createSession();
+    }
+    if (!id || !text.trim() || get().sessionViews[id]?.running) return;
+    if (pendingConfiguration) {
+      const view = get().sessionViews[id];
+      if (pendingConfiguration.model && view?.model !== pendingConfiguration.model) {
+        await window.cozy.setModel(id, pendingConfiguration.model);
+      }
+      if (view?.preset !== pendingConfiguration.preset) {
+        await window.cozy.setPreset(id, pendingConfiguration.preset);
+      }
+      if (pendingConfiguration.effort) {
+        await window.cozy.setEffort(id, pendingConfiguration.effort);
+      }
+      set((state) => updateView(state, id!, (current) => ({
+        ...current,
+        model: pendingConfiguration.model ?? current.model,
+        preset: pendingConfiguration.preset,
+        effort: pendingConfiguration.effort,
+      })));
+    }
+    const turnId = crypto.randomUUID();
+    set((state) => updateView(state, id, (view) => ({
+      ...view,
+      items: [...view.items, userItem(text, turnId)],
       running: true,
       busy: true,
     })));
-    const res = await window.cozy.send(id, text);
+    const res = await window.cozy.send(id, text, turnId);
     set((state) => updateView(state, id, (view) => ({ ...view, running: false, busy: false })));
     if (!res.ok) {
       set((state) => updateView(state, id, (view) => ({
@@ -765,7 +1030,10 @@ export const useApp = create<AppState>((set, get) => ({
 
   setPreset(preset) {
     const id = get().activeId;
-    if (!id) return;
+    if (!id) {
+      set({ preset });
+      return;
+    }
     set((state) => updateView(state, id, (view) => ({ ...view, preset })));
     void window.cozy.setPreset(id, preset);
     void get().refreshSessions();
@@ -778,37 +1046,40 @@ export const useApp = create<AppState>((set, get) => ({
 
   setModel(model) {
     const id = get().activeId;
-    if (!id) return;
     const recentModels = [model, ...get().recentModels.filter(
       (item) => item.providerID !== model.providerID || item.modelID !== model.modelID,
     )].slice(0, 8);
-    set((state) => ({
-      ...updateView(state, id, (view) => ({ ...view, model })),
-      recentModels,
-      modelPickerOpen: false,
-    }));
-    void window.cozy.setModel(id, model);
-    const settings = get().settings;
-    if (settings) {
-      const next = { ...settings, recentModels };
-      set({ settings: next });
-      void window.cozy.saveSettings(next);
+    const restored = storedEffort(get(), model);
+    if (id) {
+      set((state) => ({
+        ...updateView(state, id, (view) => ({ ...view, model, effort: restored })),
+        recentModels,
+        modelPickerOpen: false,
+      }));
+      void window.cozy.setModel(id, model);
+      void window.cozy.setEffort(id, restored);
+    } else {
+      set({ model, effort: restored, recentModels, modelPickerOpen: false });
     }
+    const settings = get().settings ?? {};
+    const next = { ...settings, recentModels };
+    set({ settings: next });
+    void window.cozy.saveSettings(next);
     // Restore (stale-dropping) the new model's effort and push it to the live
     // session, since main's same-provider setModel does not re-apply effort.
-    const restored = storedEffort(get(), model);
-    set((state) => updateView(state, id, (view) => ({ ...view, effort: restored })));
-    void window.cozy.setEffort(id, restored);
   },
 
   setEffort(effort) {
     const { activeId: id, model, providers } = get();
-    if (!id) return;
     const valid = resolveEffort(effort, effortsForModel(providers ?? { all: [], connected: [] }, model));
-    set((state) => updateView(state, id, (view) => ({ ...view, effort: valid })));
-    void window.cozy.setEffort(id, valid);
-    const settings = get().settings;
-    if (settings && model) {
+    if (id) {
+      set((state) => updateView(state, id, (view) => ({ ...view, effort: valid })));
+      void window.cozy.setEffort(id, valid);
+    } else {
+      set({ effort: valid });
+    }
+    const settings = get().settings ?? {};
+    if (model) {
       const efforts = { ...settings.reasoningEfforts };
       if (valid) efforts[modelKey(model)] = valid;
       else delete efforts[modelKey(model)];

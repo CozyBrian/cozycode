@@ -11,6 +11,7 @@ import {
   type AddressedQuestionReply,
   type AppSettingsInput,
   type CozyApi,
+  type EditTurnRequest,
   type GitStatus,
   isNativeCommand,
   type NativeCommand,
@@ -35,7 +36,8 @@ const api: CozyApi = {
   saveSettings: (input: AppSettingsInput) => ipcRenderer.invoke(IPC.settingsSave, input),
   pickWorkspace: () => ipcRenderer.invoke(IPC.pickWorkspace),
 
-  send: (sessionId: string, message: string) => ipcRenderer.invoke(IPC.sessionSend, { sessionId, message }),
+  send: (sessionId: string, message: string, turnId: string) =>
+    ipcRenderer.invoke(IPC.sessionSend, { sessionId, message, turnId }),
   abort: (sessionId: string) => ipcRenderer.invoke(IPC.sessionAbort, sessionId),
   setMode: (sessionId: string, mode: AgentMode) => ipcRenderer.invoke(IPC.sessionSetMode, { sessionId, mode }),
   setModel: (sessionId: string, ref: ModelRef) => ipcRenderer.invoke(IPC.sessionSetModel, { sessionId, ref }),
@@ -51,6 +53,10 @@ const api: CozyApi = {
   renameSession: (id: string, title: string) =>
     ipcRenderer.invoke(IPC.sessionsRename, { id, title }),
   exportSession: (id: string) => ipcRenderer.invoke(IPC.sessionsExport, id),
+  forkSession: (id: string) => ipcRenderer.invoke(IPC.sessionsFork, id),
+  forkFromTurn: (sessionId: string, turnId: string) =>
+    ipcRenderer.invoke(IPC.sessionsForkTurn, { sessionId, turnId }),
+  editTurn: (request: EditTurnRequest) => ipcRenderer.invoke(IPC.sessionsEditTurn, request),
 
   providers: {
     list: () => ipcRenderer.invoke(IPC.providersList),

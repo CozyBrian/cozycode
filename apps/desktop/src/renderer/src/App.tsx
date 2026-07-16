@@ -7,10 +7,12 @@ import { AppLayout } from "./layout/AppLayout";
 import { PermissionModal } from "./components/PermissionModal";
 import { QuestionModal } from "./components/QuestionModal";
 import { Help } from "./components/Help";
+import { EditUserTurnDialog } from "./components/EditUserTurnDialog";
 import { TextShimmer } from "./components/TextShimmer";
 import { TitleControls, ViewControls } from "./layout/TitleBar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
+import { toast } from "sonner";
 import { createSessionEventBatcher } from "./event-buffer.ts";
 
 export function App() {
@@ -43,6 +45,9 @@ export function App() {
       switch (command) {
         case "new-chat":
           void state.createSession();
+          break;
+        case "new-standalone-chat":
+          void state.createSession(null);
           break;
         case "open-project":
           void state.openWorkspace();
@@ -93,9 +98,41 @@ export function App() {
 
   // Subscribe to the main-process push streams for the app's lifetime.
   useEffect(() => {
-    const eventBatcher = createSessionEventBatcher((envelope) =>
-      useApp.getState().applyEvent(envelope),
-    );
+    const eventBatcher = createSessionEventBatcher((envelope) => {
+      const state = useApp.getState();
+      const completedInBackground =
+        envelope.event.type === "finish" &&
+        envelope.event.reason !== "abort" &&
+        envelope.sessionId !== state.activeId;
+      const failedInBackground =
+        envelope.event.type === "error" && envelope.sessionId !== state.activeId;
+      state.applyEvent(envelope);
+      if (completedInBackground) {
+        const title = state.sessions.find((session) => session.id === envelope.sessionId)?.title;
+        toast.success("Response ready", {
+          description:
+            title && !title.startsWith("New session - ")
+              ? title
+              : "A background session finished.",
+          action: {
+            label: "View",
+            onClick: () => void useApp.getState().activateSession(envelope.sessionId),
+          },
+        });
+      } else if (failedInBackground) {
+        const title = state.sessions.find((session) => session.id === envelope.sessionId)?.title;
+        toast.error("Background session failed", {
+          description:
+            title && !title.startsWith("New session - ")
+              ? title
+              : envelope.event.type === "error" ? envelope.event.message : undefined,
+          action: {
+            label: "View",
+            onClick: () => void useApp.getState().activateSession(envelope.sessionId),
+          },
+        });
+      }
+    });
     const offEvent = window.cozy.onEvent(eventBatcher.push);
     const offSessions = window.cozy.onSessionsChanged((sessions) =>
       useApp.setState({ sessions }),
@@ -160,6 +197,7 @@ export function App() {
           onReject={() => rejectQuestion(questionQueue[0]!.id, questionQueue[0]!.sessionId)}
         />
       )}
+      <EditUserTurnDialog />
       <Help open={helpOpen} onClose={() => setHelpOpen(false)} />
       <Toaster theme="dark" position="bottom-right" richColors />
     </TooltipProvider>

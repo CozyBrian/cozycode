@@ -22,6 +22,7 @@ import {
   type AppSettingsInput,
   type AddressedPermissionReply,
   type AddressedQuestionReply,
+  type EditTurnRequest,
   type NativeCommand,
   type PermissionPreset,
 } from "../shared/ipc.ts";
@@ -105,6 +106,11 @@ function installNativeMenus(): void {
       label: "File",
       submenu: [
         { label: "New Chat", accelerator: "CmdOrCtrl+N", click: command("new-chat") },
+        {
+          label: "New Standalone Chat",
+          accelerator: "CmdOrCtrl+Shift+N",
+          click: command("new-standalone-chat"),
+        },
         {
           label: "Open Project…",
           accelerator: "CmdOrCtrl+O",
@@ -211,6 +217,7 @@ function installNativeMenus(): void {
     app.dock?.setMenu(
       Menu.buildFromTemplate([
         { label: "New Chat", click: command("new-chat") },
+        { label: "New Standalone Chat", click: command("new-standalone-chat") },
         { label: "Open Project…", click: command("open-project") },
         { label: "New Terminal", click: command("new-terminal") },
         { type: "separator" },
@@ -317,9 +324,9 @@ function registerIpc(): void {
     return result.canceled ? null : (result.filePaths[0] ?? null);
   });
 
-  ipcMain.handle(IPC.sessionSend, (_e, payload: { sessionId: string; message: string }) => {
+  ipcMain.handle(IPC.sessionSend, (_e, payload: { sessionId: string; message: string; turnId: string }) => {
     if (!manager) return { ok: false, error: "No active window." };
-    return manager.send(payload.sessionId, payload.message);
+    return manager.send(payload.sessionId, payload.message, payload.turnId);
   });
   ipcMain.handle(IPC.sessionAbort, (_e, sessionId: string) => manager?.abort(sessionId));
   ipcMain.handle(IPC.sessionSetMode, (_e, payload: { sessionId: string; mode: AgentMode }) => manager?.setMode(payload.sessionId, payload.mode));
@@ -345,6 +352,13 @@ function registerIpc(): void {
   ipcMain.handle(IPC.sessionsDelete, (_e, id: string) => manager?.remove(id) ?? null);
   ipcMain.handle(IPC.sessionsRename, (_e, payload: { id: string; title: string }) =>
     manager?.rename(payload.id, payload.title),
+  );
+  ipcMain.handle(IPC.sessionsFork, (_e, id: string) => manager?.forkSession(id));
+  ipcMain.handle(IPC.sessionsForkTurn, (_e, payload: { sessionId: string; turnId: string }) =>
+    manager?.forkFromTurn(payload.sessionId, payload.turnId),
+  );
+  ipcMain.handle(IPC.sessionsEditTurn, (_e, request: EditTurnRequest) =>
+    manager?.editTurn(request.sessionId, request.turnId, request.replacementTurnId, request.text),
   );
   ipcMain.handle(IPC.sessionsExport, async (_e, id: string) => {
     if (!manager) return null;

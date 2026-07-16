@@ -1,8 +1,8 @@
 import type { SessionMeta } from "./ipc.ts";
 
 /** Preserve project order while ensuring the default root is included exactly once. */
-export function workspaceRoots(defaultRoot: string, roots?: readonly string[]): string[] {
-  return [...new Set([...(roots ?? []), defaultRoot].filter(Boolean))];
+export function workspaceRoots(defaultRoot?: string | null, roots?: readonly string[]): string[] {
+  return [...new Set([...(roots ?? []), defaultRoot].filter((root): root is string => Boolean(root)))];
 }
 
 /** Empty chats are reusable only inside the requested project. */

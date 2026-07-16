@@ -25,7 +25,7 @@ export type {
 
 export interface AppSettings {
   /** Last-used workspace; the global New chat action uses this root. */
-  workspaceRoot: string;
+  workspaceRoot?: string;
   /** Ordered project roots displayed in the sidebar. */
   openWorkspaceRoots?: string[];
   permissions?: PermissionConfig;
@@ -35,6 +35,12 @@ export interface AppSettings {
   reasoningEfforts?: Record<string, string>;
   /** Show model context window sizes in the model picker. */
   showContextSize?: boolean;
+  /** Initial central view after launch. */
+  startupView?: "empty" | "continue-last-session";
+  /** Start with every project group collapsed. Defaults to true. */
+  collapseProjectGroupsOnStartup?: boolean;
+  /** Most recently expanded or collapsed project; global New chat targets it. */
+  lastToggledWorkspaceRoot?: string;
 }
 
 export interface AppSettingsInput extends AppSettings {}
@@ -68,8 +74,15 @@ export interface SessionMeta {
  * stream. The renderer folds these into a transcript on activation.
  */
 export type SessionRecord =
-  | { at: number; kind: "user"; text: string }
+  | { at: number; kind: "user"; text: string; turnId: string }
   | { at: number; kind: "event"; event: SessionEvent };
+
+export interface EditTurnRequest {
+  sessionId: string;
+  turnId: string;
+  replacementTurnId: string;
+  text: string;
+}
 
 /** Result of activating/creating a session: metadata + transcript to replay. */
 export interface SessionSnapshot {
@@ -148,6 +161,9 @@ export const IPC = {
   sessionsDelete: "sessions:delete",
   sessionsRename: "sessions:rename",
   sessionsExport: "sessions:export",
+  sessionsFork: "sessions:fork",
+  sessionsForkTurn: "sessions:fork-turn",
+  sessionsEditTurn: "sessions:edit-turn",
   // providers
   providersList: "providers:list",
   providersConnectApi: "providers:connect-api",
@@ -178,6 +194,7 @@ export const IPC = {
 
 export const NATIVE_COMMANDS = [
   "new-chat",
+  "new-standalone-chat",
   "open-project",
   "export-current-session",
   "open-settings",
@@ -204,7 +221,7 @@ export interface CozyApi {
   pickWorkspace(): Promise<string | null>;
 
   // session-addressed actions
-  send(sessionId: string, message: string): Promise<{ ok: boolean; error?: string }>;
+  send(sessionId: string, message: string, turnId: string): Promise<{ ok: boolean; error?: string }>;
   abort(sessionId: string): Promise<void>;
   setMode(sessionId: string, mode: AgentMode): Promise<void>;
   setModel(sessionId: string, ref: ModelRef): Promise<void>;
@@ -217,11 +234,14 @@ export interface CozyApi {
   listSessions(): Promise<SessionMeta[]>;
   createSession(opts?: { workspaceRoot?: string | null }): Promise<SessionSnapshot>;
   activateSession(id: string): Promise<SessionSnapshot>;
-  /** Returns the new active snapshot if the active session was deleted, else null. */
+  /** Deletes a session; deleting the active session leaves no session selected. */
   deleteSession(id: string): Promise<SessionSnapshot | null>;
   renameSession(id: string, title: string): Promise<void>;
   /** Opens a Save As dialog and exports the selected session as Markdown. */
   exportSession(id: string): Promise<string | null>;
+  forkSession(id: string): Promise<SessionSnapshot>;
+  forkFromTurn(sessionId: string, turnId: string): Promise<SessionSnapshot>;
+  editTurn(request: EditTurnRequest): Promise<{ ok: boolean; error?: string }>;
 
   providers: {
     list(): Promise<ProviderList>;

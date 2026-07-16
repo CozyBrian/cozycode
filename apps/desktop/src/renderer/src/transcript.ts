@@ -3,7 +3,7 @@ import type { SessionEvent } from "@cozycode/protocol";
 export type ToolStatus = "running" | "done" | "error" | "denied";
 
 export type TranscriptItem =
-  | { id: string; kind: "user"; text: string }
+  | { id: string; kind: "user"; text: string; turnId?: string }
   | { id: string; kind: "assistant"; text: string; streaming: boolean }
   | {
       id: string;
@@ -40,8 +40,8 @@ export type TranscriptItem =
 let counter = 0;
 const nextId = () => `i${counter++}`;
 
-export function userItem(text: string): TranscriptItem {
-  return { id: nextId(), kind: "user", text };
+export function userItem(text: string, turnId?: string): TranscriptItem {
+  return { id: turnId ? `turn:${turnId}` : nextId(), kind: "user", text, turnId };
 }
 
 /** Fold one session event into the transcript, returning a new array. */

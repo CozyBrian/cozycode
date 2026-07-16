@@ -1,4 +1,4 @@
-import { useApp } from "../store/app-store";
+import { newChatWorkspace, useApp } from "../store/app-store";
 import { Transcript } from "./Transcript";
 import { Composer } from "./Composer";
 import { ContextChip } from "./ContextChip";
@@ -32,10 +32,13 @@ function ChatHeader({ title, active }: { title: string; active: boolean }) {
 export function MainView() {
   const empty = useApp((s) => s.items.length === 0 && !s.busy);
   const sessions = useApp((s) => s.sessions);
+  const settings = useApp((s) => s.settings);
   const activeId = useApp((s) => s.activeId);
 
   const active = sessions.find((s) => s.id === activeId);
-  const project = projectLabel(active?.workspaceRoot ?? null);
+  const project = projectLabel(
+    active ? active.workspaceRoot : newChatWorkspace({ settings, sessions }),
+  );
   const started = !empty;
   const title = active?.title.startsWith("New session - ") ? "" : (active?.title ?? "");
 

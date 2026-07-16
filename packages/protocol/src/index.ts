@@ -264,6 +264,8 @@ export type SessionEvent =
   | { type: "subagent-event"; toolCallId: string; sessionId: string; event: SessionEvent }
   /** A subagent finished; `result` is its final assistant text. */
   | { type: "subagent-finish"; toolCallId: string; sessionId: string; result: string; isError?: boolean }
+  /** Renderer control event emitted when a background edit-and-continue send settles. */
+  | { type: "session-settled" }
   | { type: "finish"; reason: string; usage?: TokenUsage };
 
 // ── Config ───────────────────────────────────────────────────────────────────

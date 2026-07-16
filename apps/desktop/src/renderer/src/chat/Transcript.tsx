@@ -7,7 +7,7 @@ import {
   type UIEvent,
   type WheelEvent,
 } from "react";
-import { ArrowLeft, Check, Copy } from "lucide-react";
+import { ArrowLeft, Check, Copy, GitFork, Pencil } from "lucide-react";
 import { pickSpinnerVerb } from "@cozycode/commands";
 import {
   Virtuoso,
@@ -47,13 +47,7 @@ function findSubagent(items: TranscriptItem[], sessionId: string) {
 const Row = memo(function Row({ item }: { item: TranscriptItem }) {
   switch (item.kind) {
     case "user":
-      return (
-        <div className="flex justify-end">
-          <div className="selectable max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-cozy-600/30 px-4 py-2.5 text-[15px] leading-relaxed text-foreground">
-            {item.text}
-          </div>
-        </div>
-      );
+      return <UserMessage item={item} />;
     case "assistant":
       return <AssistantMessage text={item.text} />;
     case "tool":
@@ -72,6 +66,63 @@ const Row = memo(function Row({ item }: { item: TranscriptItem }) {
       );
   }
 });
+
+function UserMessage({ item }: { item: Extract<TranscriptItem, { kind: "user" }> }) {
+  const [copied, setCopied] = useState(false);
+  const running = useApp((state) => state.running);
+  const isTopLevel = useApp((state) => state.subagentView === null);
+  const forkFromTurn = useApp((state) => state.forkFromTurn);
+  const setEditingUserTurn = useApp((state) => state.setEditingUserTurn);
+
+  const copy = async () => {
+    await navigator.clipboard.writeText(item.text);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <div className="group flex flex-col items-end">
+      <div className="selectable max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-cozy-600/30 px-4 py-2.5 text-[15px] leading-relaxed text-foreground">
+        {item.text}
+      </div>
+      <div className="mt-1 flex h-7 items-center justify-end opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+        <button
+          type="button"
+          onClick={() => void copy()}
+          className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
+          aria-label="Copy user message"
+          title="Copy"
+        >
+          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+        </button>
+        {isTopLevel && item.turnId ? (
+          <>
+            <button
+              type="button"
+              disabled={running}
+              onClick={() => void forkFromTurn(item.turnId!, item.text)}
+              className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground disabled:opacity-35"
+              aria-label="Fork from this message"
+              title="Fork from here"
+            >
+              <GitFork className="size-3.5" />
+            </button>
+            <button
+              type="button"
+              disabled={running}
+              onClick={() => setEditingUserTurn({ turnId: item.turnId!, text: item.text })}
+              className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground disabled:opacity-35"
+              aria-label="Edit user message"
+              title="Edit and continue"
+            >
+              <Pencil className="size-3.5" />
+            </button>
+          </>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 function AssistantMessage({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);

@@ -91,11 +91,11 @@ export class SessionManager {
   }
 
   /** Build one live runtime without disturbing any other session. */
-  private async createRuntime(meta: SessionMeta): Promise<SessionRuntime> {
+  private async createRuntime(meta: SessionMeta, includeInterrupted = true): Promise<SessionRuntime> {
     const config = await this.buildConfig(meta);
     const [initialHistory, records] = await Promise.all([
       this.store.readHistory(meta.id),
-      this.store.readRecords(meta.id),
+      this.store.readRecords(meta.id, includeInterrupted),
     ]);
     const agents = await loadAgents({ workspaceRoot: config.workspaceRoot }).catch(() => []);
     const providers = await this.providers.list();
@@ -159,6 +159,22 @@ export class SessionManager {
     }
   }
 
+  private async createAcceptedTurnRuntime(id: string): Promise<SessionRuntime> {
+    await this.closingRuntimes.get(id);
+    const pending = this.runtimePromises.get(id);
+    if (pending) return pending;
+    const creation = this.store.get(id).then((meta) => {
+      if (!meta) throw new Error(`Unknown session: ${id}`);
+      return this.createRuntime(meta, false);
+    });
+    this.runtimePromises.set(id, creation);
+    try {
+      return await creation;
+    } finally {
+      this.runtimePromises.delete(id);
+    }
+  }
+
   private snapshot(meta: SessionMeta, records: SessionRecord[], runtime?: SessionRuntime): SessionSnapshot {
     return {
       meta,
@@ -197,7 +213,9 @@ export class SessionManager {
       modelID: "gpt-5.2",
     };
     const meta = await this.store.create({
-      workspaceRoot: opts.workspaceRoot ?? s?.workspaceRoot ?? null,
+      workspaceRoot: Object.hasOwn(opts, "workspaceRoot")
+        ? (opts.workspaceRoot ?? null)
+        : (s?.workspaceRoot ?? null),
       model,
       preset: "ask",
       now: Date.now(),
@@ -227,22 +245,21 @@ export class SessionManager {
     return this.snapshot(runtime?.meta ?? meta, records, runtime);
   }
 
-  /**
-   * Delete a session. Returns the new active snapshot when the *active* session
-   * was removed (so the renderer can swap its transcript), else null.
-   */
+  /** Delete a session; removing the active one leaves the manager sessionless. */
   async remove(id: string): Promise<SessionSnapshot | null> {
     ++this.activationSequence;
     const wasActive = this.activeId === id;
+    if (wasActive) {
+      this.activeId = null;
+      this.terminals.setCwd(null);
+      this.git.setCwd(null);
+    }
     const runtime = this.runtimes.get(id) ?? await this.runtimePromises.get(id);
     if (runtime) await this.closeRuntime(id, runtime, true);
-    if (wasActive) this.activeId = null;
     await this.store.remove(id);
     this.notifyChanged();
     if (!wasActive) return null;
-    const next = await this.init();
-    this.notifyChanged();
-    return next;
+    return null;
   }
 
   async rename(id: string, title: string): Promise<void> {
@@ -261,6 +278,103 @@ export class SessionManager {
     const runtime = this.runtimes.get(id) ?? await this.runtimePromises.get(id);
     const records = runtime?.records ?? await this.store.readRecords(id);
     return { title: meta.title, markdown: formatTranscriptMarkdown(meta.title, markdownItems(records)) };
+  }
+
+  async forkSession(id: string): Promise<SessionSnapshot> {
+    return this.forkOperation(id, undefined);
+  }
+
+  async forkFromTurn(id: string, turnId: string): Promise<SessionSnapshot> {
+    return this.forkOperation(id, turnId);
+  }
+
+  private async forkOperation(id: string, turnId: string | undefined): Promise<SessionSnapshot> {
+    if (this.pendingSends.has(id) || this.runtimes.get(id)?.running) {
+      throw new Error("Wait for this session to finish before forking.");
+    }
+    this.pendingSends.add(id);
+    const activation = ++this.activationSequence;
+    try {
+      await this.persistSettledSource(id);
+      const meta = turnId
+        ? await this.store.forkFromTurn(id, turnId, Date.now())
+        : await this.store.forkSession(id, Date.now());
+      return this.activateFork(meta, activation);
+    } finally {
+      this.pendingSends.delete(id);
+    }
+  }
+
+  editTurn(
+    id: string,
+    turnId: string,
+    replacementTurnId: string,
+    text: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (!text.trim()) return Promise.resolve({ ok: false, error: "The message cannot be empty." });
+    if (this.pendingSends.has(id) || this.runtimes.get(id)?.running) {
+      return Promise.resolve({ ok: false, error: "Wait for this session to finish before editing." });
+    }
+    this.pendingSends.add(id);
+    const prepare = (async () => {
+      const runtime = this.runtimes.get(id) ?? await this.runtimePromises.get(id);
+      if (runtime) await this.closeRuntime(id, runtime, true);
+      const meta = await this.store.rewriteTurn(
+        id,
+        turnId,
+        replacementTurnId,
+        text.trim(),
+        Date.now(),
+      );
+      this.notifyChanged();
+      if (this.activeId === id) {
+        this.terminals.setCwd(meta.workspaceRoot);
+        this.git.setCwd(meta.workspaceRoot);
+      }
+      const generation = this.sendInternal(id, text.trim(), replacementTurnId, true);
+      void generation.then((result) => {
+        if (result.ok || this.web.isDestroyed()) return;
+        const event = { type: "error", message: result.error ?? "The edited turn did not complete." } satisfies SessionEvent;
+        try {
+          this.store.appendEvent(id, event);
+          this.runtimes.get(id)?.records.push({ at: Date.now(), kind: "event", event });
+        } catch {
+          // The renderer still needs the failure even if persistence is unavailable.
+        }
+        this.web.send(IPC.sessionEvent, { sessionId: id, event });
+      }).finally(() => {
+        this.pendingSends.delete(id);
+        this.abortRequested.delete(id);
+        if (!this.web.isDestroyed()) {
+          this.web.send(IPC.sessionEvent, { sessionId: id, event: { type: "session-settled" } });
+        }
+      });
+      return { ok: true };
+    })().catch((error) => {
+      this.pendingSends.delete(id);
+      this.abortRequested.delete(id);
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    });
+    return prepare;
+  }
+
+  private async persistSettledSource(id: string): Promise<void> {
+    if (this.runtimes.get(id)?.running) {
+      throw new Error("Wait for this session to finish before forking.");
+    }
+    const runtime = this.runtimes.get(id) ?? await this.runtimePromises.get(id);
+    if (runtime) await this.store.writeHistory(id, runtime.session.snapshotHistory());
+  }
+
+  private async activateFork(meta: SessionMeta, activation: number): Promise<SessionSnapshot> {
+    const records = await this.store.readRecords(meta.id);
+    if (activation === this.activationSequence) {
+      this.activeId = meta.id;
+      this.terminals.setCwd(meta.workspaceRoot);
+      this.git.setCwd(meta.workspaceRoot);
+    }
+    this.notifyChanged();
+    return this.snapshot(meta, records);
   }
 
   // --- mode / model / preset ------------------------------------------------
@@ -328,6 +442,7 @@ export class SessionManager {
       // would resurrect stale modals on replay.
       const liveOnly =
         event.type === "title-change" ||
+        event.type === "session-settled" ||
         event.type === "permission-asked" ||
         event.type === "permission-replied" ||
         event.type === "question-asked" ||
@@ -363,13 +478,13 @@ export class SessionManager {
     else session?.answerQuestion(body.requestId, body.answers);
   }
 
-  send(id: string, message: string): Promise<{ ok: boolean; error?: string }> {
+  send(id: string, message: string, turnId: string): Promise<{ ok: boolean; error?: string }> {
     if (this.closing) return Promise.resolve({ ok: false, error: "The window is closing." });
     if (this.pendingSends.has(id) || this.runtimes.get(id)?.running) {
       return Promise.resolve({ ok: false, error: "This session is already running." });
     }
     this.pendingSends.add(id);
-    const operation = this.sendInternal(id, message);
+    const operation = this.sendInternal(id, message, turnId, false);
     void operation.finally(() => {
       this.pendingSends.delete(id);
       this.abortRequested.delete(id);
@@ -377,9 +492,16 @@ export class SessionManager {
     return operation;
   }
 
-  private async sendInternal(id: string, message: string): Promise<{ ok: boolean; error?: string }> {
+  private async sendInternal(
+    id: string,
+    message: string,
+    turnId: string,
+    accepted: boolean,
+  ): Promise<{ ok: boolean; error?: string }> {
     try {
-      const runtime = await this.ensureRuntime(id);
+      const runtime = accepted
+        ? await this.createAcceptedTurnRuntime(id)
+        : await this.ensureRuntime(id);
       if (runtime.running) return { ok: false, error: "This session is already running." };
       if (this.closing) return { ok: false, error: "The window is closing." };
       await runtime.mutation;
@@ -387,11 +509,13 @@ export class SessionManager {
       runtime.lastUsed = Date.now();
       const operation = (async () => {
         // Persist the user turn + metadata before running the agent.
-        const now = Date.now();
-        runtime.meta.messageCount = this.store.appendUserTurn(id, message, now);
-        runtime.records.push({ at: now, kind: "user", text: message });
-        runtime.meta.updatedAt = now;
-        this.notifyChanged();
+        if (!accepted) {
+          const now = Date.now();
+          runtime.meta.messageCount = this.store.appendUserTurn(id, message, now, turnId);
+          runtime.records.push({ at: now, kind: "user", text: message, turnId });
+          runtime.meta.updatedAt = now;
+          this.notifyChanged();
+        }
         if (this.closing) return { ok: false, error: "The window is closing." };
         if (this.abortRequested.delete(id)) {
           const event = { type: "finish", reason: "abort" } satisfies SessionEvent;

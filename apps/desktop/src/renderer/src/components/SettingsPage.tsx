@@ -5,6 +5,7 @@ import { ProvidersSection } from "./settings/ProvidersSection";
 import { SETTINGS_SECTIONS } from "./settings/sections";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { workspaceRoots } from "../../../shared/workspaces.ts";
 
@@ -33,19 +34,28 @@ export function SettingsPage() {
   const providers = useApp((state) => state.providers);
   const section = useApp((state) => state.settingsSection);
   const sidebarOpen = useApp((state) => state.sidebarOpen);
-  const configured = Boolean(initial?.workspaceRoot && providers?.connected.length);
   const [workspaceRoot, setWorkspaceRoot] = useState(initial?.workspaceRoot ?? "");
   const [showContextSize, setShowContextSize] = useState(initial?.showContextSize ?? false);
+  const [startupView, setStartupView] = useState(initial?.startupView ?? "empty");
+  const [collapseProjectGroups, setCollapseProjectGroups] = useState(
+    initial?.collapseProjectGroupsOnStartup ?? true,
+  );
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => setWorkspaceRoot(initial?.workspaceRoot ?? ""), [initial]);
   useEffect(() => setShowContextSize(initial?.showContextSize ?? false), [initial]);
+  useEffect(() => setStartupView(initial?.startupView ?? "empty"), [initial]);
+  useEffect(
+    () => setCollapseProjectGroups(initial?.collapseProjectGroupsOnStartup ?? true),
+    [initial],
+  );
 
   const save = async () => {
-    if (!workspaceRoot) return setError("A workspace folder is required.");
-    if (!providers?.connected.length) {
+    const workspaceSection = section === "general" || section === "workspace";
+    if (workspaceSection && !workspaceRoot) return setError("A workspace folder is required.");
+    if (workspaceSection && !providers?.connected.length) {
       useApp.getState().openSettings("providers");
       return setError("Connect a provider before continuing.");
     }
@@ -53,15 +63,16 @@ export function SettingsPage() {
     try {
       const saved = await window.cozy.saveSettings({
         ...initial,
-        workspaceRoot,
+        workspaceRoot: workspaceRoot || initial?.workspaceRoot,
         openWorkspaceRoots: workspaceRoots(workspaceRoot, initial?.openWorkspaceRoots),
         permissions: initial?.permissions,
         recentModels: useApp.getState().recentModels,
         showContextSize,
+        startupView,
+        collapseProjectGroupsOnStartup: collapseProjectGroups,
       });
       useApp.getState().setSettings(saved);
       setSaved(true);
-      if (!configured) await useApp.getState().bootstrap();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -125,6 +136,40 @@ export function SettingsPage() {
                     )}
                   >
                     <span className={cn("pointer-events-none block size-4 rounded-full bg-white shadow transition-transform", showContextSize ? "translate-x-4" : "translate-x-0")} />
+                  </button>
+                </SettingRow>
+                <SettingRow title="On launch" description="Choose whether CozyCode opens a blank composer or resumes the latest session.">
+                  <Select
+                    value={startupView}
+                    onValueChange={(value) => {
+                      setStartupView(value as "empty" | "continue-last-session");
+                      setSaved(false);
+                    }}
+                  >
+                    <SelectTrigger aria-label="On launch">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="empty">Show empty view</SelectItem>
+                      <SelectItem value="continue-last-session">Continue last session</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </SettingRow>
+                <SettingRow title="Collapsed project groups" description="Start each launch with all project groups collapsed.">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={collapseProjectGroups}
+                    onClick={() => {
+                      setCollapseProjectGroups((value) => !value);
+                      setSaved(false);
+                    }}
+                    className={cn(
+                      "relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors",
+                      collapseProjectGroups ? "bg-primary" : "bg-white/10",
+                    )}
+                  >
+                    <span className={cn("pointer-events-none block size-4 rounded-full bg-white shadow transition-transform", collapseProjectGroups ? "translate-x-4" : "translate-x-0")} />
                   </button>
                 </SettingRow>
               </section>

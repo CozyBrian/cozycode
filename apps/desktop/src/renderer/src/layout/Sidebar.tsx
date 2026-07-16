@@ -1,7 +1,7 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { forwardRef, useCallback, useMemo, useRef, useState } from "react";
 import { ArrowLeft, FolderClosed, FolderOpen, Search as SearchIcon, SquarePen, Trash2 } from "lucide-react";
 import { AnimatePresence, motion, Reorder, useReducedMotion } from "motion/react";
-import { useApp, type SettingsSection } from "../store/app-store";
+import { newChatWorkspace, useApp, type SettingsSection } from "../store/app-store";
 import type { SessionMeta } from "../../../shared/ipc.ts";
 import { SidebarSessionRow } from "./SidebarSessionRow";
 import { SidebarFooter } from "./SidebarFooter";
@@ -12,19 +12,22 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-function ActionRow({
-  icon,
-  label,
-  onClick,
-  active,
-}: {
+const ActionRow = forwardRef<HTMLButtonElement, {
   icon: React.ReactNode;
   label: string;
   onClick?: () => void;
   active?: boolean;
-}) {
+} & Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "children" | "onClick">>(function ActionRow({
+  icon,
+  label,
+  onClick,
+  active,
+  ...props
+}, ref) {
   return (
     <button
+      {...props}
+      ref={ref}
       type="button"
       onClick={onClick}
       className={cn(
@@ -36,7 +39,7 @@ function ActionRow({
       {label}
     </button>
   );
-}
+});
 
 function projectName(root: string): string {
   const parts = root.replace(/\/+$/, "").split("/");
@@ -87,14 +90,22 @@ export function Sidebar() {
   const openWorkspace = useApp((s) => s.openWorkspace);
   const removeWorkspace = useApp((s) => s.removeWorkspace);
   const reorderWorkspaces = useApp((s) => s.reorderWorkspaces);
+  const setLastToggledWorkspace = useApp((s) => s.setLastToggledWorkspace);
   const settingsOpen = useApp((s) => s.settingsOpen);
+  const providers = useApp((s) => s.providers);
   const settingsSection = useApp((s) => s.settingsSection);
   const activeId = useApp((s) => s.activeId);
   const closeSettings = useApp((s) => s.closeSettings);
   const shouldReduceMotion = useReducedMotion();
   const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState("");
-  const [collapsedRoots, setCollapsedRoots] = useState<Set<string>>(() => new Set());
+  const [collapsedRoots, setCollapsedRoots] = useState<Set<string>>(() => {
+    if (settings?.collapseProjectGroupsOnStartup === false) return new Set();
+    return new Set([
+      ...(settings?.openWorkspaceRoots ?? (settings?.workspaceRoot ? [settings.workspaceRoot] : [])),
+      ...sessions.flatMap((session) => session.workspaceRoot ? [session.workspaceRoot] : []),
+    ]);
+  });
   const [projectPendingRemoval, setProjectPendingRemoval] = useState<{ root: string; sessionCount: number } | null>(null);
   const now = Date.now();
 
@@ -134,13 +145,14 @@ export function Sidebar() {
   }, [sessions]);
 
   const openRoots = settings?.openWorkspaceRoots ?? (settings?.workspaceRoot ? [settings.workspaceRoot] : []);
-  const canLeaveSettings = Boolean(activeId);
+  const canLeaveSettings = Boolean(activeId || providers?.connected.length);
   const projects = openRoots.map((root) => ({ root, sessions: projectSessions.get(root) ?? [] }));
   const otherProjects = [...projectSessions.entries()]
     .filter(([root]) => !openRoots.includes(root))
     .map(([root, projectSessions]) => ({ root, sessions: projectSessions }));
 
   const toggleProject = (root: string) => {
+    void setLastToggledWorkspace(root);
     setCollapsedRoots((current) => {
       const next = new Set(current);
       if (next.has(root)) next.delete(root);
@@ -150,9 +162,19 @@ export function Sidebar() {
   };
 
   const createChat = async () => {
-    const root = settings?.workspaceRoot;
+    const root = newChatWorkspace(useApp.getState());
     await createSession();
     if (!root) return;
+    setCollapsedRoots((current) => {
+      if (!current.has(root)) return current;
+      const next = new Set(current);
+      next.delete(root);
+      return next;
+    });
+  };
+
+  const createProjectChat = async (root: string) => {
+    await createSession(root);
     setCollapsedRoots((current) => {
       if (!current.has(root)) return current;
       const next = new Set(current);
@@ -197,11 +219,21 @@ export function Sidebar() {
   const sessionsView = (
     <div className="flex h-full flex-col">
       <nav className="app-drag flex flex-col gap-0.5 px-3 pt-1 pb-1">
-        <ActionRow
-          icon={<SquarePen />}
-          label="New chat"
-          onClick={() => void createChat()}
-        />
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <ActionRow
+              icon={<SquarePen />}
+              label="New chat"
+              onClick={() => void createChat()}
+            />
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuItem onSelect={() => void createSession(null)}>
+              <SquarePen className="size-4" /> New standalone chat
+              <span className="ml-auto text-xs text-muted-foreground">⌘⇧N</span>
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
         <ActionRow icon={<FolderOpen />} label="Open project" onClick={() => void openWorkspace()} />
         <ActionRow
           icon={<SearchIcon />}
@@ -245,6 +277,7 @@ export function Sidebar() {
                   collapsed={collapsed}
                   canRemove={openRoots.length > 1}
                   onToggle={() => toggleProject(project.root)}
+                  onCreate={() => void createProjectChat(project.root)}
                   onRemove={() => requestRemoveProject(project.root, projectSessionCounts.get(project.root) ?? 0)}
                 />
               </Reorder.Item>
@@ -266,6 +299,7 @@ export function Sidebar() {
                   collapsed={collapsed}
                   canRemove={false}
                   onToggle={() => toggleProject(project.root)}
+                  onCreate={() => void createProjectChat(project.root)}
                   onRemove={() => {}}
                 />
               );
@@ -385,6 +419,7 @@ function ProjectGroup({
   collapsed,
   canRemove,
   onToggle,
+  onCreate,
   onRemove,
 }: {
   root: string;
@@ -393,6 +428,7 @@ function ProjectGroup({
   collapsed: boolean;
   canRemove: boolean;
   onToggle: () => void;
+  onCreate: () => void;
   onRemove: () => void;
 }) {
   const shouldReduceMotion = useReducedMotion();
@@ -410,13 +446,16 @@ function ProjectGroup({
             <span className="truncate">{projectName(root)}</span>
           </button>
         </ContextMenuTrigger>
-        {canRemove ? (
-          <ContextMenuContent>
+        <ContextMenuContent>
+          <ContextMenuItem onSelect={onCreate}>
+            <SquarePen className="size-4" /> New chat
+          </ContextMenuItem>
+          {canRemove ? (
             <ContextMenuItem variant="destructive" onSelect={onRemove}>
               <Trash2 className="size-4" /> Remove project
             </ContextMenuItem>
-          </ContextMenuContent>
-        ) : null}
+          ) : null}
+        </ContextMenuContent>
       </ContextMenu>
       <AnimatePresence initial={false}>
         {!collapsed && (

@@ -8,6 +8,10 @@ describe("workspaceRoots", () => {
       "/projects/cozycode",
     ]);
   });
+
+  test("supports preferences without a default workspace", () => {
+    expect(workspaceRoots(undefined, ["/projects/one"])).toEqual(["/projects/one"]);
+  });
 });
 
 describe("emptySessionForWorkspace", () => {
