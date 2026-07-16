@@ -1,0 +1,249 @@
+import { afterEach, describe, test } from "node:test";
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { SessionStore } from "../src/main/session-store.ts";
+
+const dirs = [];
+
+function tempDir() {
+  const dir = mkdtempSync(join(tmpdir(), "cozycode-session-store-"));
+  dirs.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+describe("SQLite SessionStore", () => {
+  test("persists ordered sessions, replay records, history, and cascading deletion", async () => {
+    const dir = tempDir();
+    const store = new SessionStore(dir);
+    const first = await store.create({
+      id: "first",
+      workspaceRoot: "/one",
+      model: { providerID: "test", modelID: "model" },
+      preset: "ask",
+      now: 1,
+    });
+    await store.create({
+      id: "second",
+      workspaceRoot: null,
+      model: { providerID: "test", modelID: "model" },
+      preset: "plan",
+      now: 2,
+    });
+    store.appendUser(first.id, "hello");
+    store.appendEvent(first.id, { type: "text-delta", text: "hel" });
+    store.appendEvent(first.id, { type: "text-delta", text: "lo" });
+    store.appendEvent(first.id, { type: "finish", reason: "stop" });
+    await store.writeHistory(first.id, [{ role: "user", content: "hello" }]);
+
+    assert.deepEqual((await store.list()).map((session) => session.id), ["second", "first"]);
+    const records = await store.readRecords(first.id);
+    assert.deepEqual(records, [
+      { at: records[0].at, kind: "user", text: "hello" },
+      { at: records[1].at, kind: "event", event: { type: "text-delta", text: "hello" } },
+      { at: records[2].at, kind: "event", event: { type: "finish", reason: "stop" } },
+    ]);
+    assert.deepEqual(await store.readHistory(first.id), [{ role: "user", content: "hello" }]);
+
+    await store.remove(first.id);
+    assert.equal(await store.get(first.id), undefined);
+    assert.deepEqual(await store.readRecords(first.id), []);
+    assert.equal(await store.readHistory(first.id), undefined);
+    await store.dispose();
+  });
+
+  test("imports legacy files once in a restart-safe transaction", async () => {
+    const dir = tempDir();
+    const meta = {
+      id: "legacy",
+      title: "Legacy chat",
+      titleEdited: true,
+      createdAt: 10,
+      updatedAt: 20,
+      workspaceRoot: "/legacy",
+      model: "old-model",
+      preset: "ask",
+      messageCount: 1,
+    };
+    writeFileSync(join(dir, "index.json"), JSON.stringify({ version: 1, sessions: [meta] }));
+    writeFileSync(join(dir, "legacy.events.jsonl"), [
+      JSON.stringify({ at: 11, kind: "user", text: "migrated" }),
+      JSON.stringify({ at: 12, kind: "event", event: { type: "finish", reason: "stop" } }),
+      "{torn",
+      "",
+    ].join("\n"));
+    const history = [
+      { role: "user", content: "migrated" },
+      { role: "assistant", content: [
+        { type: "custom", kind: "provider-part" },
+        { type: "tool-approval-request", approvalId: "approval", toolCallId: "call" },
+      ] },
+      { role: "tool", content: [{ type: "tool-approval-response", approvalId: "approval", approved: true }] },
+    ];
+    writeFileSync(join(dir, "legacy.history.json"), JSON.stringify(history));
+
+    const first = new SessionStore(dir, "legacy-provider");
+    assert.deepEqual((await first.get("legacy")).model, {
+      providerID: "legacy-provider",
+      modelID: "old-model",
+    });
+    assert.equal((await first.readRecords("legacy")).length, 2);
+    assert.deepEqual(await first.readHistory("legacy"), history);
+    await first.dispose();
+
+    writeFileSync(join(dir, "legacy.events.jsonl"), `${JSON.stringify({ at: 13, kind: "user", text: "do not reimport" })}\n`, { flag: "a" });
+    const reopened = new SessionStore(dir, "legacy-provider");
+    assert.equal((await reopened.readRecords("legacy")).length, 2);
+    await reopened.dispose();
+  });
+
+  test("allows a WAL reader while another store writes", async () => {
+    const dir = tempDir();
+    const writer = new SessionStore(dir);
+    await writer.create({
+      id: "shared",
+      workspaceRoot: null,
+      model: { providerID: "test", modelID: "model" },
+      preset: "ask",
+      now: 1,
+    });
+    const reader = new SessionStore(dir);
+
+    writer.appendUser("shared", "live");
+    writer.appendEvent("shared", { type: "finish", reason: "stop" });
+
+    assert.equal((await reader.readRecords("shared")).length, 2);
+    await Promise.all([writer.dispose(), reader.dispose()]);
+  });
+
+  test("applies disjoint metadata patches without reverting either one", async () => {
+    const dir = tempDir();
+    const store = new SessionStore(dir);
+    await store.create({
+      id: "patches",
+      workspaceRoot: null,
+      model: { providerID: "test", modelID: "old" },
+      preset: "ask",
+      now: 1,
+    });
+
+    await Promise.all([
+      store.touch("patches", { model: { providerID: "test", modelID: "new" } }),
+      store.touch("patches", { messageCount: 3, updatedAt: 4 }),
+    ]);
+
+    assert.deepEqual(await store.get("patches"), {
+      id: "patches",
+      title: "New session - 1970-01-01T00:00:00.001Z",
+      titleEdited: false,
+      createdAt: 1,
+      updatedAt: 4,
+      workspaceRoot: null,
+      model: { providerID: "test", modelID: "new" },
+      preset: "ask",
+      messageCount: 3,
+      parentID: null,
+      agent: undefined,
+    });
+    await store.dispose();
+  });
+
+  test("atomically appends accepted user turns and updates counters", async () => {
+    const dir = tempDir();
+    const store = new SessionStore(dir);
+    await store.create({
+      id: "turn",
+      workspaceRoot: null,
+      model: { providerID: "test", modelID: "model" },
+      preset: "ask",
+      now: 1,
+    });
+
+    assert.equal(store.appendUserTurn("turn", "one", 10), 1);
+    assert.equal(store.appendUserTurn("turn", "two", 20), 2);
+    assert.equal((await store.get("turn")).messageCount, 2);
+    assert.equal((await store.get("turn")).updatedAt, 20);
+    assert.deepEqual((await store.readRecords("turn")).filter((record) => record.kind === "user").map((record) => record.text), ["one", "two"]);
+    await store.dispose();
+  });
+
+  test("opens with a malformed index and retries import after it is repaired", async () => {
+    const dir = tempDir();
+    writeFileSync(join(dir, "index.json"), "{broken");
+    const first = new SessionStore(dir);
+    assert.deepEqual(await first.list(), []);
+    await first.dispose();
+
+    const meta = {
+      id: "repaired",
+      title: "Recovered",
+      titleEdited: false,
+      createdAt: 1,
+      updatedAt: 1,
+      workspaceRoot: null,
+      model: { providerID: "test", modelID: "model" },
+      preset: "ask",
+      messageCount: 0,
+    };
+    writeFileSync(join(dir, "index.json"), JSON.stringify({ version: 1, sessions: [meta] }));
+    writeFileSync(join(dir, "repaired.history.json"), "not-json");
+    const repaired = new SessionStore(dir);
+    assert.equal((await repaired.get("repaired")).title, "Recovered");
+    assert.equal(await repaired.readHistory("repaired"), undefined);
+    await repaired.dispose();
+  });
+
+  test("flushes streaming text on a bounded timer", async () => {
+    const dir = tempDir();
+    const writer = new SessionStore(dir);
+    await writer.create({
+      id: "stream",
+      workspaceRoot: null,
+      model: { providerID: "test", modelID: "model" },
+      preset: "ask",
+      now: 1,
+    });
+    const reader = new SessionStore(dir);
+    writer.appendEvent("stream", { type: "text-delta", text: "durable" });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal((await reader.readRecords("stream"))[0].event.text, "durable");
+    await Promise.all([writer.dispose(), reader.dispose()]);
+  });
+
+  test("retries a legacy replay log that was temporarily unreadable", async () => {
+    const dir = tempDir();
+    const meta = {
+      id: "retry",
+      title: "Retry",
+      titleEdited: false,
+      createdAt: 1,
+      updatedAt: 1,
+      workspaceRoot: null,
+      model: { providerID: "test", modelID: "model" },
+      preset: "ask",
+      messageCount: 1,
+    };
+    writeFileSync(join(dir, "index.json"), JSON.stringify({ version: 1, sessions: [meta] }));
+    const replayPath = join(dir, "retry.events.jsonl");
+    mkdirSync(replayPath);
+
+    const first = new SessionStore(dir);
+    assert.deepEqual(await first.readRecords("retry"), []);
+    await first.dispose();
+
+    rmSync(replayPath, { recursive: true });
+    writeFileSync(replayPath, [
+      JSON.stringify({ at: 2, kind: "user", text: "recovered" }),
+      JSON.stringify({ at: 3, kind: "event", event: { type: "finish", reason: "stop" } }),
+      "",
+    ].join("\n"));
+    const retried = new SessionStore(dir);
+    assert.equal((await retried.readRecords("retry")).length, 2);
+    await retried.dispose();
+  });
+});

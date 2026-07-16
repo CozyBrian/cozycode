@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Download, MessageSquare, Pencil, Trash2 } from "lucide-react";
 import type { SessionMeta } from "../../../shared/ipc.ts";
-import { useApp } from "../store/app-store";
+import { isSessionRunningInBackground, useApp } from "../store/app-store";
 import { relativeTime } from "../lib/relative-time";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
@@ -12,6 +12,7 @@ export function SidebarSessionRow({ session, now }: { session: SessionMeta; now:
   const rename = useApp((s) => s.renameSession);
   const remove = useApp((s) => s.deleteSession);
   const exportSession = useApp((s) => s.exportSession);
+  const runningInBackground = useApp((s) => isSessionRunningInBackground(s, session.id));
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(session.title);
 
@@ -29,9 +30,11 @@ export function SidebarSessionRow({ session, now }: { session: SessionMeta; now:
       <ContextMenuTrigger asChild>
         <div
           className={cn(
-            "group flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-sidebar-foreground/80 transition-colors",
+            "group relative flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-sidebar-foreground/80 transition-colors",
             active ? "bg-sidebar-accent text-sidebar-foreground" : "hover:bg-white/5",
+            runningInBackground && "background-session-glow",
           )}
+          aria-label={runningInBackground ? `${session.title}, running in background` : session.title}
           onClick={() => !editing && void activate(session.id)}
         >
           <MessageSquare className="size-3.5 shrink-0 text-muted-foreground" />
@@ -54,6 +57,7 @@ export function SidebarSessionRow({ session, now }: { session: SessionMeta; now:
           ) : (
             <>
               <span className="min-w-0 flex-1 truncate">{session.title}</span>
+              {runningInBackground && <span className="sr-only">Running in background</span>}
               <span className="shrink-0 text-xs text-muted-foreground">
                 {relativeTime(session.updatedAt, now)}
               </span>

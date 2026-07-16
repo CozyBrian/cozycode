@@ -133,6 +133,30 @@
   .content-panel-scroll::-webkit-scrollbar {
     display: none;
   }
+  .background-session-glow::after {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border: 1px solid oklch(from var(--primary) l c h / 22%);
+    border-radius: calc(var(--radius) - 3px);
+    box-shadow: 0 0 9px oklch(from var(--primary) l c h / 20%);
+    opacity: 0.35;
+    pointer-events: none;
+    animation: background-session-pulse 2.4s cubic-bezier(0.77, 0, 0.175, 1) infinite;
+  }
+}
+
+@keyframes background-session-pulse {
+  50% {
+    opacity: 0.9;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .background-session-glow::after {
+    animation: none;
+    opacity: 0.6;
+  }
 }
 
 /* Slim, unobtrusive scrollbars matching the dark surface. */

@@ -3,12 +3,12 @@ import type {
   AgentMode,
   CustomProviderInput,
   ModelRef,
-  PermissionReplyBody,
   ProviderList,
-  SessionEvent,
 } from "@cozycode/protocol";
 import {
   IPC,
+  type AddressedPermissionReply,
+  type AddressedQuestionReply,
   type AppSettingsInput,
   type CozyApi,
   type GitStatus,
@@ -16,6 +16,7 @@ import {
   type NativeCommand,
   type PermissionPreset,
   type SessionMeta,
+  type SessionEventEnvelope,
   type TermData,
   type TermExit,
 } from "../shared/ipc.ts";
@@ -34,14 +35,14 @@ const api: CozyApi = {
   saveSettings: (input: AppSettingsInput) => ipcRenderer.invoke(IPC.settingsSave, input),
   pickWorkspace: () => ipcRenderer.invoke(IPC.pickWorkspace),
 
-  send: (message: string) => ipcRenderer.invoke(IPC.sessionSend, message),
-  abort: () => ipcRenderer.invoke(IPC.sessionAbort),
-  setMode: (mode: AgentMode) => ipcRenderer.invoke(IPC.sessionSetMode, mode),
-  setModel: (ref: ModelRef) => ipcRenderer.invoke(IPC.sessionSetModel, ref),
-  setEffort: (effort?: string) => ipcRenderer.invoke(IPC.sessionSetEffort, effort ?? null),
-  setPreset: (preset: PermissionPreset) => ipcRenderer.invoke(IPC.sessionSetPreset, preset),
-  replyPermission: (body: PermissionReplyBody) => ipcRenderer.invoke(IPC.permissionReply, body),
-  replyQuestion: (body) => ipcRenderer.invoke(IPC.questionReply, body),
+  send: (sessionId: string, message: string) => ipcRenderer.invoke(IPC.sessionSend, { sessionId, message }),
+  abort: (sessionId: string) => ipcRenderer.invoke(IPC.sessionAbort, sessionId),
+  setMode: (sessionId: string, mode: AgentMode) => ipcRenderer.invoke(IPC.sessionSetMode, { sessionId, mode }),
+  setModel: (sessionId: string, ref: ModelRef) => ipcRenderer.invoke(IPC.sessionSetModel, { sessionId, ref }),
+  setEffort: (sessionId: string, effort?: string) => ipcRenderer.invoke(IPC.sessionSetEffort, { sessionId, effort: effort ?? null }),
+  setPreset: (sessionId: string, preset: PermissionPreset) => ipcRenderer.invoke(IPC.sessionSetPreset, { sessionId, preset }),
+  replyPermission: (body: AddressedPermissionReply) => ipcRenderer.invoke(IPC.permissionReply, body),
+  replyQuestion: (body: AddressedQuestionReply) => ipcRenderer.invoke(IPC.questionReply, body),
 
   listSessions: () => ipcRenderer.invoke(IPC.sessionsList),
   createSession: (opts) => ipcRenderer.invoke(IPC.sessionsCreate, opts ?? {}),
@@ -101,8 +102,8 @@ const api: CozyApi = {
     },
   },
 
-  onEvent(cb: (event: SessionEvent) => void) {
-    const listener = (_e: IpcRendererEvent, event: SessionEvent) => cb(event);
+  onEvent(cb: (envelope: SessionEventEnvelope) => void) {
+    const listener = (_e: IpcRendererEvent, envelope: SessionEventEnvelope) => cb(envelope);
     ipcRenderer.on(IPC.sessionEvent, listener);
     return () => ipcRenderer.off(IPC.sessionEvent, listener);
   },

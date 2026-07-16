@@ -16,12 +16,12 @@ import type {
   AgentMode,
   CustomProviderInput,
   ModelRef,
-  PermissionReplyBody,
-  QuestionReplyBody,
 } from "@cozycode/protocol";
 import {
   IPC,
   type AppSettingsInput,
+  type AddressedPermissionReply,
+  type AddressedQuestionReply,
   type NativeCommand,
   type PermissionPreset,
 } from "../shared/ipc.ts";
@@ -310,23 +310,23 @@ function registerIpc(): void {
     return result.canceled ? null : (result.filePaths[0] ?? null);
   });
 
-  ipcMain.handle(IPC.sessionSend, (_e, message: string) => {
+  ipcMain.handle(IPC.sessionSend, (_e, payload: { sessionId: string; message: string }) => {
     if (!manager) return { ok: false, error: "No active window." };
-    return manager.send(message);
+    return manager.send(payload.sessionId, payload.message);
   });
-  ipcMain.handle(IPC.sessionAbort, () => manager?.abort());
-  ipcMain.handle(IPC.sessionSetMode, (_e, mode: AgentMode) => manager?.setMode(mode));
-  ipcMain.handle(IPC.sessionSetModel, (_e, model: ModelRef) => manager?.setModel(model));
-  ipcMain.handle(IPC.sessionSetEffort, (_e, effort: string | null) =>
-    manager?.setReasoningEffort(effort ?? undefined),
+  ipcMain.handle(IPC.sessionAbort, (_e, sessionId: string) => manager?.abort(sessionId));
+  ipcMain.handle(IPC.sessionSetMode, (_e, payload: { sessionId: string; mode: AgentMode }) => manager?.setMode(payload.sessionId, payload.mode));
+  ipcMain.handle(IPC.sessionSetModel, (_e, payload: { sessionId: string; ref: ModelRef }) => manager?.setModel(payload.sessionId, payload.ref));
+  ipcMain.handle(IPC.sessionSetEffort, (_e, payload: { sessionId: string; effort: string | null }) =>
+    manager?.setReasoningEffort(payload.sessionId, payload.effort ?? undefined),
   );
-  ipcMain.handle(IPC.sessionSetPreset, (_e, preset: PermissionPreset) =>
-    manager?.setPreset(preset),
+  ipcMain.handle(IPC.sessionSetPreset, (_e, payload: { sessionId: string; preset: PermissionPreset }) =>
+    manager?.setPreset(payload.sessionId, payload.preset),
   );
-  ipcMain.handle(IPC.permissionReply, (_e, body: PermissionReplyBody) =>
+  ipcMain.handle(IPC.permissionReply, (_e, body: AddressedPermissionReply) =>
     manager?.replyPermission(body),
   );
-  ipcMain.handle(IPC.questionReply, (_e, body: QuestionReplyBody) =>
+  ipcMain.handle(IPC.questionReply, (_e, body: AddressedQuestionReply) =>
     manager?.replyQuestion(body),
   );
 

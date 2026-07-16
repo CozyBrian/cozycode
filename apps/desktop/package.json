@@ -12,6 +12,7 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "tsc -p tsconfig.json",
+    "test:store": "node --disable-warning=ExperimentalWarning --test test/session-store.node-test.mjs",
     "icon": "bun run scripts/build-icon.mjs",
     "pack:mac": "bun run icon && bun run build && electron-builder --config electron-builder.yml --mac --arm64 --dir",
     "dist:mac": "bun run icon && bun run build && electron-builder --config electron-builder.yml --mac dmg zip --arm64 --publish never"

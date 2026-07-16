@@ -13,7 +13,7 @@
     "dist:mac": "bun run --cwd apps/desktop dist:mac",
     "tui": "bun apps/tui/src/index.tsx",
     "typecheck": "tsc -p packages/protocol/tsconfig.json && tsc -p packages/commands/tsconfig.json && tsc -p packages/core/tsconfig.json && tsc -p apps/desktop/tsconfig.json && tsc -p apps/tui/tsconfig.json",
-    "test": "bun test",
+    "test": "bun test && bun run --cwd apps/desktop test:store",
     "agent": "bun packages/core/scripts/agent-run.ts"
   },
   "devDependencies": {
@@ -24,7 +24,8 @@
     "@types/node": "26.1.0"
   },
   "engines": {
-    "bun": ">=1.3.0"
+    "bun": ">=1.3.0",
+    "node": ">=24.0.0"
   },
   "packageManager": "bun@1.3.11"
 }

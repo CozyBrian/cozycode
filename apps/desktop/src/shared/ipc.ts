@@ -6,7 +6,9 @@ import type {
   OAuthStart,
   PermissionConfig,
   PermissionReplyBody,
+  PermissionRequest,
   QuestionReplyBody,
+  QuestionRequest,
   SessionEvent,
   ProviderList,
 } from "@cozycode/protocol";
@@ -73,6 +75,23 @@ export type SessionRecord =
 export interface SessionSnapshot {
   meta: SessionMeta;
   records: SessionRecord[];
+  running: boolean;
+  permissionQueue: PermissionRequest[];
+  questionQueue: QuestionRequest[];
+}
+
+/** A core event tagged with the top-level session that owns it. */
+export interface SessionEventEnvelope {
+  sessionId: string;
+  event: SessionEvent;
+}
+
+export interface AddressedPermissionReply extends PermissionReplyBody {
+  sessionId: string;
+}
+
+export interface AddressedQuestionReply extends QuestionReplyBody {
+  sessionId: string;
 }
 
 /** Push payload for terminal output. */
@@ -184,15 +203,15 @@ export interface CozyApi {
   saveSettings(input: AppSettingsInput): Promise<AppSettings>;
   pickWorkspace(): Promise<string | null>;
 
-  // active-session actions
-  send(message: string): Promise<{ ok: boolean; error?: string }>;
-  abort(): Promise<void>;
-  setMode(mode: AgentMode): Promise<void>;
-  setModel(ref: ModelRef): Promise<void>;
-  setEffort(effort?: string): Promise<void>;
-  setPreset(preset: PermissionPreset): Promise<void>;
-  replyPermission(body: PermissionReplyBody): Promise<void>;
-  replyQuestion(body: QuestionReplyBody): Promise<void>;
+  // session-addressed actions
+  send(sessionId: string, message: string): Promise<{ ok: boolean; error?: string }>;
+  abort(sessionId: string): Promise<void>;
+  setMode(sessionId: string, mode: AgentMode): Promise<void>;
+  setModel(sessionId: string, ref: ModelRef): Promise<void>;
+  setEffort(sessionId: string, effort?: string): Promise<void>;
+  setPreset(sessionId: string, preset: PermissionPreset): Promise<void>;
+  replyPermission(body: AddressedPermissionReply): Promise<void>;
+  replyQuestion(body: AddressedQuestionReply): Promise<void>;
 
   // session management
   listSessions(): Promise<SessionMeta[]>;
@@ -235,7 +254,7 @@ export interface CozyApi {
   };
 
   // push streams (permission-asked / permission-replied arrive via onEvent)
-  onEvent(cb: (event: SessionEvent) => void): () => void;
+  onEvent(cb: (envelope: SessionEventEnvelope) => void): () => void;
   onSessionsChanged(cb: (sessions: SessionMeta[]) => void): () => void;
   onNativeCommand(cb: (command: NativeCommand) => void): () => void;
   setDockBadge(count: number): void;

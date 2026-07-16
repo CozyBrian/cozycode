@@ -22,7 +22,12 @@ export function App() {
   const replyPermission = useApp((s) => s.replyPermission);
   const answerQuestion = useApp((s) => s.answerQuestion);
   const rejectQuestion = useApp((s) => s.rejectQuestion);
-  const dockBadgeCount = permissionQueue.length + questionQueue.length;
+  const dockBadgeCount = useApp((s) =>
+    Object.values(s.sessionViews).reduce(
+      (count, view) => count + view.permissionQueue.length + view.questionQueue.length,
+      0,
+    ),
+  );
 
   // Bootstrap settings + active session once.
   useEffect(() => {
@@ -87,7 +92,7 @@ export function App() {
 
   // Subscribe to the main-process push streams for the app's lifetime.
   useEffect(() => {
-    const offEvent = window.cozy.onEvent((event) => useApp.getState().applyEvent(event));
+    const offEvent = window.cozy.onEvent((envelope) => useApp.getState().applyEvent(envelope));
     const offSessions = window.cozy.onSessionsChanged((sessions) =>
       useApp.setState({ sessions }),
     );
@@ -139,15 +144,15 @@ export function App() {
           request={permissionQueue[0]}
           queueLength={permissionQueue.length}
           onReply={(reply, message) =>
-            replyPermission(permissionQueue[0]!.id, reply, message)
+            replyPermission(permissionQueue[0]!.id, reply, message, permissionQueue[0]!.sessionId)
           }
         />
       )}
       {!permissionQueue[0] && questionQueue[0] && (
         <QuestionModal
           request={questionQueue[0]}
-          onAnswer={(answers) => answerQuestion(questionQueue[0]!.id, answers)}
-          onReject={() => rejectQuestion(questionQueue[0]!.id)}
+          onAnswer={(answers) => answerQuestion(questionQueue[0]!.id, answers, questionQueue[0]!.sessionId)}
+          onReject={() => rejectQuestion(questionQueue[0]!.id, questionQueue[0]!.sessionId)}
         />
       )}
       <Help open={helpOpen} onClose={() => setHelpOpen(false)} />

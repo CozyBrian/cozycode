@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type UIEvent, type WheelEvent } from "react";
 import { ArrowLeft, Check, Copy } from "lucide-react";
 import { pickSpinnerVerb } from "@cozycode/commands";
 import { useApp } from "../store/app-store";
@@ -94,6 +94,7 @@ function AssistantMessage({ text }: { text: string }) {
 export function Transcript() {
   const items = useApp((s) => s.items);
   const busy = useApp((s) => s.busy);
+  const activeId = useApp((s) => s.activeId);
   const subagentView = useApp((s) => s.subagentView);
   const exitSubagent = useApp((s) => s.exitSubagent);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -109,14 +110,32 @@ export function Transcript() {
 
   const subagent = subagentView ? findSubagent(items, subagentView) : null;
 
+  const handleScroll = (event: UIEvent<HTMLDivElement>) => {
+    const element = event.currentTarget;
+    followingRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 96;
+  };
+
+  const handleWheel = (event: WheelEvent<HTMLDivElement>) => {
+    if (event.deltaY < 0) followingRef.current = false;
+  };
+
+  useEffect(() => {
+    followingRef.current = true;
+  }, [activeId, subagentView]);
+
   useEffect(() => {
     if (followingRef.current) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [items, busy, subagent?.items]);
+  }, [activeId, items, busy, subagentView, subagent?.items]);
 
   // Read-only drill-in view of a subagent (the live parent turn keeps running).
   if (subagentView && subagent) {
     return (
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        onWheel={handleWheel}
+        className="min-h-0 flex-1 overflow-y-auto"
+      >
         <div className="mx-auto flex max-w-190 flex-col gap-4 px-6 py-6">
           <div className="flex items-center gap-2 border-b border-border/60 pb-3">
             <button
@@ -145,10 +164,8 @@ export function Transcript() {
   return (
     <div
       ref={scrollRef}
-      onScroll={(event) => {
-        const element = event.currentTarget;
-        followingRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 96;
-      }}
+      onScroll={handleScroll}
+      onWheel={handleWheel}
       className="min-h-0 flex-1 overflow-y-auto"
     >
       <div className="mx-auto flex max-w-190 flex-col gap-4 px-6 py-6">

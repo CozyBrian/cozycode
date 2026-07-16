@@ -27,6 +27,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
   const input = useApp((s) => s.input);
   const setInput = useApp((s) => s.setInput);
   const busy = useApp((s) => s.busy);
+  const running = useApp((s) => s.running);
   const preset = useApp((s) => s.preset);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -193,7 +194,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
             ) : (
               <button
                 type="submit"
-                disabled={!input.trim()}
+                disabled={!input.trim() || running}
                 className="flex size-8 items-center justify-center rounded-full bg-primary text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-40"
               >
                 <ArrowUp className="size-4" />

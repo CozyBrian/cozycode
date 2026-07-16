@@ -15,6 +15,8 @@ import type {
   PermissionPreset,
   SessionMeta,
   SessionRecord,
+  SessionEventEnvelope,
+  SessionSnapshot,
 } from "../../../shared/ipc.ts";
 
 export type ContentPanelTab = "overview" | "diffs" | "git";
@@ -31,6 +33,30 @@ export interface SessionUsage {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+}
+
+export interface SessionViewState {
+  /** Monotonic renderer-local revision used to reject stale activation snapshots. */
+  revision: number;
+  items: TranscriptItem[];
+  /** The addressed send promise is still settling in the main process. */
+  running: boolean;
+  busy: boolean;
+  turnUsage: TokenUsage | null;
+  sessionUsage: SessionUsage;
+  preset: PermissionPreset;
+  model: ModelRef | null;
+  effort: string | undefined;
+  permissionQueue: PermissionRequest[];
+  questionQueue: QuestionRequest[];
+  input: string;
+}
+
+export function isSessionRunningInBackground(
+  state: Pick<AppState, "activeId" | "sessionViews">,
+  sessionId: string,
+): boolean {
+  return Boolean(state.sessionViews[sessionId]?.running) && state.activeId !== sessionId;
 }
 import { effortsForModel, modelKey, resolveEffort } from "@cozycode/commands";
 import { foldEvent, userItem, type TranscriptItem } from "../transcript.ts";
@@ -73,9 +99,14 @@ export interface AppState {
   /** Activated top-level sessions, used by the title-bar back and forward controls. */
   sessionHistory: string[];
   sessionHistoryIndex: number;
+  /** Live renderer state retained for every visited or running session. */
+  sessionViews: Record<string, SessionViewState>;
 
   // active chat
+  revision: number;
   items: TranscriptItem[];
+  /** The selected session still has a main-process send promise in flight. */
+  running: boolean;
   busy: boolean;
   /** Usage from the most recent finished turn (for the context meter). */
   turnUsage: TokenUsage | null;
@@ -105,7 +136,7 @@ export interface AppState {
 
   // --- actions ---
   bootstrap(): Promise<void>;
-  applyEvent(event: SessionEvent): void;
+  applyEvent(envelope: SessionEventEnvelope): void;
 
   toggleSidebar(): void;
   setSidebarWidth(px: number): void;
@@ -155,9 +186,9 @@ export interface AppState {
   setEffort(effort: string | undefined): void;
   applyProviders(providers: ProviderList): Promise<void>;
   refreshProviders(): Promise<void>;
-  replyPermission(requestId: string, reply: PermissionReply, message?: string): void;
-  answerQuestion(requestId: string, answers: string[][]): void;
-  rejectQuestion(requestId: string): void;
+  replyPermission(requestId: string, reply: PermissionReply, message?: string, sessionId?: string): void;
+  answerQuestion(requestId: string, answers: string[][], sessionId?: string): void;
+  rejectQuestion(requestId: string, sessionId?: string): void;
   systemNote(text: string, error?: boolean): void;
 
   newTerminal(): Promise<void>;
@@ -229,6 +260,89 @@ function sumUsage(records: SessionRecord[]): { sessionUsage: SessionUsage; turnU
   return { sessionUsage, turnUsage };
 }
 
+function viewFromSnapshot(
+  snapshot: SessionSnapshot,
+  state: Pick<AppState, "providers" | "settings">,
+  input = "",
+): SessionViewState {
+  return {
+    revision: 0,
+    items: replayRecords(snapshot.records),
+    running: snapshot.running,
+    busy: snapshot.running,
+    ...sumUsage(snapshot.records),
+    preset: snapshot.meta.preset,
+    model: snapshot.meta.model,
+    effort: storedEffort(state, snapshot.meta.model),
+    permissionQueue: snapshot.permissionQueue,
+    questionQueue: snapshot.questionQueue,
+    input,
+  };
+}
+
+function activeView(state: AppState): SessionViewState {
+  return {
+    revision: state.revision,
+    items: state.items,
+    running: state.running,
+    busy: state.busy,
+    turnUsage: state.turnUsage,
+    sessionUsage: state.sessionUsage,
+    preset: state.preset,
+    model: state.model,
+    effort: state.effort,
+    permissionQueue: state.permissionQueue,
+    questionQueue: state.questionQueue,
+    input: state.input,
+  };
+}
+
+function foldViewEvent(view: SessionViewState, event: SessionEvent): SessionViewState {
+  let next = { ...view, items: foldEvent(view.items, event) };
+  if (event.type === "mode-change") {
+    next.preset = event.mode === "plan" ? "plan" : next.preset === "plan" ? "ask" : next.preset;
+  } else if (event.type === "permission-asked") {
+    if (!next.permissionQueue.some((request) => request.id === event.request.id)) {
+      next.permissionQueue = [...next.permissionQueue, event.request];
+    }
+  } else if (event.type === "permission-replied") {
+    next.permissionQueue = next.permissionQueue.filter((request) => request.id !== event.requestId);
+  } else if (event.type === "question-asked") {
+    if (!next.questionQueue.some((request) => request.id === event.request.id)) {
+      next.questionQueue = [...next.questionQueue, event.request];
+    }
+  } else if (event.type === "question-answered" || event.type === "question-rejected") {
+    next.questionQueue = next.questionQueue.filter((request) => request.id !== event.requestId);
+  } else if (event.type === "effort-change") {
+    next.effort = event.effort;
+  } else if (event.type === "finish") {
+    next.busy = false;
+    next.turnUsage = event.usage ?? next.turnUsage;
+    next.sessionUsage = addUsage(next.sessionUsage, event.usage);
+  } else if (event.type === "subagent-event" && event.event.type === "finish") {
+    next.sessionUsage = addUsage(next.sessionUsage, event.event.usage);
+  } else if (event.type === "error") {
+    next.busy = false;
+  }
+  return next;
+}
+
+function updateView(
+  state: AppState,
+  sessionId: string,
+  update: (view: SessionViewState) => SessionViewState,
+): Partial<AppState> {
+  const current = state.sessionViews[sessionId] ?? (state.activeId === sessionId ? activeView(state) : null);
+  if (!current) return {};
+  const next = { ...update(current), revision: current.revision + 1 };
+  return {
+    sessionViews: { ...state.sessionViews, [sessionId]: next },
+    ...(state.activeId === sessionId ? next : {}),
+  };
+}
+
+let activationSequence = 0;
+
 export const useApp = create<AppState>((set, get) => ({
   settings: null,
   loaded: false,
@@ -254,8 +368,11 @@ export const useApp = create<AppState>((set, get) => ({
   subagentHistoryIndex: 0,
   sessionHistory: [],
   sessionHistoryIndex: -1,
+  sessionViews: {},
 
+  revision: 0,
   items: [],
+  running: false,
   busy: false,
   turnUsage: null,
   sessionUsage: EMPTY_USAGE,
@@ -284,6 +401,7 @@ export const useApp = create<AppState>((set, get) => ({
       const snap = sessions[0]
         ? await window.cozy.activateSession(sessions[0].id)
         : await window.cozy.createSession();
+      const view = viewFromSnapshot(snap, { settings, providers });
       set({
         activeId: snap.meta.id,
         settings,
@@ -294,12 +412,8 @@ export const useApp = create<AppState>((set, get) => ({
         settingsOpen: false,
         settingsForwardAvailable: false,
         settingsSection: "general",
-        items: replayRecords(snap.records),
-        ...sumUsage(snap.records),
-        preset: snap.meta.preset,
-        model: snap.meta.model,
-        effort: storedEffort({ settings, providers }, snap.meta.model),
-        busy: false,
+        ...view,
+        sessionViews: { [snap.meta.id]: view },
         sessionHistory: [snap.meta.id],
         sessionHistoryIndex: 0,
       });
@@ -318,39 +432,8 @@ export const useApp = create<AppState>((set, get) => ({
     });
   },
 
-  applyEvent(event) {
-    set((s) => ({ items: foldEvent(s.items, event) }));
-    if (event.type === "mode-change") {
-      // Keep the pill honest if the mode changed underneath us.
-      set((s) => ({ preset: event.mode === "plan" ? "plan" : s.preset === "plan" ? "ask" : s.preset }));
-    }
-    if (event.type === "permission-asked") {
-      set((s) => ({ permissionQueue: [...s.permissionQueue, event.request] }));
-    }
-    if (event.type === "permission-replied") {
-      // Covers cascade-reject and always-grant of siblings too — no extra logic.
-      set((s) => ({ permissionQueue: s.permissionQueue.filter((r) => r.id !== event.requestId) }));
-    }
-    if (event.type === "question-asked") {
-      set((s) => ({ questionQueue: [...s.questionQueue, event.request] }));
-    }
-    if (event.type === "question-answered" || event.type === "question-rejected") {
-      set((s) => ({ questionQueue: s.questionQueue.filter((r) => r.id !== event.requestId) }));
-    }
-    if (event.type === "effort-change") set({ effort: event.effort });
-    if (event.type === "finish") {
-      set((s) => ({
-        busy: false,
-        turnUsage: event.usage ?? s.turnUsage,
-        sessionUsage: addUsage(s.sessionUsage, event.usage),
-      }));
-    }
-    // Subagent turns bill into the session total (not the parent's context meter).
-    if (event.type === "subagent-event" && event.event.type === "finish") {
-      const usage = event.event.usage;
-      if (usage) set((s) => ({ sessionUsage: addUsage(s.sessionUsage, usage) }));
-    }
-    if (event.type === "error") set({ busy: false });
+  applyEvent({ sessionId, event }) {
+    set((state) => updateView(state, sessionId, (view) => foldViewEvent(view, event)));
   },
 
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
@@ -396,7 +479,11 @@ export const useApp = create<AppState>((set, get) => ({
   setHelpOpen: (open) => set({ helpOpen: open }),
   setModelPickerOpen: (open) => set({ modelPickerOpen: open }),
   setEffortPickerOpen: (open) => set({ effortPickerOpen: open }),
-  setInput: (v) => set({ input: v }),
+  setInput: (input) => {
+    const id = get().activeId;
+    if (!id) return set({ input });
+    set((state) => updateView(state, id, (view) => ({ ...view, input })));
+  },
   setSettings: (s) => set({ settings: s }),
 
   async openWorkspace() {
@@ -517,18 +604,14 @@ export const useApp = create<AppState>((set, get) => ({
       return;
     }
 
+    const request = ++activationSequence;
     const snap = await window.cozy.createSession({ workspaceRoot: root });
+    if (request !== activationSequence) return;
+    const view = viewFromSnapshot(snap, get());
     set({
       activeId: snap.meta.id,
-      items: replayRecords(snap.records),
-      ...sumUsage(snap.records),
-      preset: snap.meta.preset,
-      model: snap.meta.model,
-      effort: storedEffort(get(), snap.meta.model),
-      busy: false,
-      input: "",
-      permissionQueue: [],
-      questionQueue: [],
+      ...view,
+      sessionViews: { ...get().sessionViews, [snap.meta.id]: view },
       subagentView: null,
       subagentHistory: [null],
       subagentHistoryIndex: 0,
@@ -542,24 +625,63 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   async activateSession(id, recordHistory = true, historyIndex) {
-    if (id === get().activeId) return;
-    const snap = await window.cozy.activateSession(id);
-    const { sessionHistory, sessionHistoryIndex } = get();
+    if (id === get().activeId) {
+      set({ settingsOpen: false, settingsForwardAvailable: false });
+      return;
+    }
+    const request = ++activationSequence;
+    const state = get();
+    const { sessionHistory, sessionHistoryIndex } = state;
     const nextHistory = recordHistory
-      ? [...sessionHistory.slice(0, sessionHistoryIndex + 1), snap.meta.id]
+      ? [...sessionHistory.slice(0, sessionHistoryIndex + 1), id]
       : sessionHistory;
-    const nextHistoryIndex = recordHistory ? nextHistory.length - 1 : (historyIndex ?? sessionHistory.indexOf(snap.meta.id));
+    const nextHistoryIndex = recordHistory ? nextHistory.length - 1 : (historyIndex ?? sessionHistory.indexOf(id));
+    const cached = state.sessionViews[id];
+    const meta = state.sessions.find((session) => session.id === id);
+    const optimisticView = cached ?? (meta
+      ? viewFromSnapshot({
+          meta,
+          records: [],
+          running: false,
+          permissionQueue: [],
+          questionQueue: [],
+        }, state)
+      : null);
+    const optimisticRevision = optimisticView?.revision ?? -1;
+    if (optimisticView) {
+      set({
+        activeId: id,
+        ...optimisticView,
+        sessionViews: { ...state.sessionViews, [id]: optimisticView },
+        subagentView: null,
+        subagentHistory: [null],
+        subagentHistoryIndex: 0,
+        settingsOpen: false,
+        settingsForwardAvailable: recordHistory ? false : state.settingsForwardAvailable,
+        sessionHistory: nextHistory,
+        sessionHistoryIndex: nextHistoryIndex,
+      });
+    }
+
+    const snap = await window.cozy.activateSession(id);
+    if (request !== activationSequence) return;
+    const latest = get().sessionViews[id];
+    const changedDuringActivation = Boolean(latest && latest.revision !== optimisticRevision);
+    const preserveLive = Boolean(latest && (cached || changedDuringActivation));
+    const view = preserveLive && latest
+      ? {
+          ...latest,
+          running: changedDuringActivation ? latest.running : snap.running,
+          busy: changedDuringActivation ? latest.busy : snap.running ? latest.busy : false,
+          preset: snap.meta.preset,
+          model: snap.meta.model,
+          effort: storedEffort(get(), snap.meta.model),
+        }
+      : viewFromSnapshot(snap, get());
     set({
       activeId: snap.meta.id,
-      items: replayRecords(snap.records),
-      ...sumUsage(snap.records),
-      preset: snap.meta.preset,
-      model: snap.meta.model,
-      effort: storedEffort(get(), snap.meta.model),
-      busy: false,
-      input: "",
-      permissionQueue: [],
-      questionQueue: [],
+      ...view,
+      sessionViews: { ...get().sessionViews, [id]: view },
       subagentView: null,
       subagentHistory: [null],
       subagentHistoryIndex: 0,
@@ -572,20 +694,18 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   async deleteSession(id) {
+    ++activationSequence;
     const snap = await window.cozy.deleteSession(id);
     const sessionHistory = get().sessionHistory.filter((sessionId) => sessionId !== id);
+    const sessionViews = { ...get().sessionViews };
+    delete sessionViews[id];
     if (snap) {
       if (!sessionHistory.includes(snap.meta.id)) sessionHistory.push(snap.meta.id);
+      const view = get().sessionViews[snap.meta.id] ?? viewFromSnapshot(snap, get());
       set({
         activeId: snap.meta.id,
-        items: replayRecords(snap.records),
-        ...sumUsage(snap.records),
-        preset: snap.meta.preset,
-        model: snap.meta.model,
-        effort: storedEffort(get(), snap.meta.model),
-        busy: false,
-        permissionQueue: [],
-        questionQueue: [],
+        ...view,
+        sessionViews: { ...sessionViews, [snap.meta.id]: view },
         subagentView: null,
         subagentHistory: [null],
         subagentHistoryIndex: 0,
@@ -593,7 +713,7 @@ export const useApp = create<AppState>((set, get) => ({
         sessionHistoryIndex: sessionHistory.lastIndexOf(snap.meta.id),
       });
     } else {
-      set((s) => ({ sessionHistory, sessionHistoryIndex: sessionHistory.lastIndexOf(s.activeId ?? "") }));
+      set((s) => ({ sessionViews, sessionHistory, sessionHistoryIndex: sessionHistory.lastIndexOf(s.activeId ?? "") }));
     }
     await get().refreshSessions();
   },
@@ -608,14 +728,22 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   async send(text) {
-    if (!text.trim() || get().busy) return;
-    set((s) => ({ items: [...s.items, userItem(text)], busy: true }));
-    const res = await window.cozy.send(text);
+    const id = get().activeId;
+    if (!id || !text.trim() || get().sessionViews[id]?.running) return;
+    set((state) => updateView(state, id, (view) => ({
+      ...view,
+      items: [...view.items, userItem(text)],
+      running: true,
+      busy: true,
+    })));
+    const res = await window.cozy.send(id, text);
+    set((state) => updateView(state, id, (view) => ({ ...view, running: false, busy: false })));
     if (!res.ok) {
-      set((s) => ({
+      set((state) => updateView(state, id, (view) => ({
+        ...view,
         busy: false,
-        items: [...s.items, { id: `err-${s.items.length}`, kind: "error", text: res.error ?? "Unknown error" }],
-      }));
+        items: [...view.items, { id: `err-${view.items.length}`, kind: "error", text: res.error ?? "Unknown error" }],
+      })));
     }
     void get().refreshSessions();
   },
@@ -623,18 +751,23 @@ export const useApp = create<AppState>((set, get) => ({
   abort: () => {
     // Providers may take time to acknowledge an abort. End the local turn now
     // so the stop control and transcript never remain visually active.
-    set((s) => ({
+    const id = get().activeId;
+    if (!id) return;
+    set((state) => updateView(state, id, (view) => ({
+      ...view,
       busy: false,
-      items: foldEvent(s.items, { type: "finish", reason: "abort" }),
+      items: foldEvent(view.items, { type: "finish", reason: "abort" }),
       permissionQueue: [],
       questionQueue: [],
-    }));
-    void window.cozy.abort();
+    })));
+    void window.cozy.abort(id);
   },
 
   setPreset(preset) {
-    set({ preset });
-    void window.cozy.setPreset(preset);
+    const id = get().activeId;
+    if (!id) return;
+    set((state) => updateView(state, id, (view) => ({ ...view, preset })));
+    void window.cozy.setPreset(id, preset);
     void get().refreshSessions();
   },
 
@@ -644,11 +777,17 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   setModel(model) {
+    const id = get().activeId;
+    if (!id) return;
     const recentModels = [model, ...get().recentModels.filter(
       (item) => item.providerID !== model.providerID || item.modelID !== model.modelID,
     )].slice(0, 8);
-    set({ model, recentModels, modelPickerOpen: false });
-    void window.cozy.setModel(model);
+    set((state) => ({
+      ...updateView(state, id, (view) => ({ ...view, model })),
+      recentModels,
+      modelPickerOpen: false,
+    }));
+    void window.cozy.setModel(id, model);
     const settings = get().settings;
     if (settings) {
       const next = { ...settings, recentModels };
@@ -658,15 +797,16 @@ export const useApp = create<AppState>((set, get) => ({
     // Restore (stale-dropping) the new model's effort and push it to the live
     // session, since main's same-provider setModel does not re-apply effort.
     const restored = storedEffort(get(), model);
-    set({ effort: restored });
-    void window.cozy.setEffort(restored);
+    set((state) => updateView(state, id, (view) => ({ ...view, effort: restored })));
+    void window.cozy.setEffort(id, restored);
   },
 
   setEffort(effort) {
-    const { model, providers } = get();
+    const { activeId: id, model, providers } = get();
+    if (!id) return;
     const valid = resolveEffort(effort, effortsForModel(providers ?? { all: [], connected: [] }, model));
-    set({ effort: valid });
-    void window.cozy.setEffort(valid);
+    set((state) => updateView(state, id, (view) => ({ ...view, effort: valid })));
+    void window.cozy.setEffort(id, valid);
     const settings = get().settings;
     if (settings && model) {
       const efforts = { ...settings.reasoningEfforts };
@@ -687,29 +827,47 @@ export const useApp = create<AppState>((set, get) => ({
     await get().applyProviders(await window.cozy.providers.list());
   },
 
-  replyPermission(requestId, reply, message) {
+  replyPermission(requestId, reply, message, sessionId) {
+    const id = sessionId ?? get().activeId;
+    if (!id) return;
     // Optimistically drop from the queue; the replied event confirms it (idempotent).
-    set((s) => ({ permissionQueue: s.permissionQueue.filter((r) => r.id !== requestId) }));
-    void window.cozy.replyPermission({ requestId, reply, message });
+    set((state) => updateView(state, id, (view) => ({
+      ...view,
+      permissionQueue: view.permissionQueue.filter((request) => request.id !== requestId),
+    })));
+    void window.cozy.replyPermission({ sessionId: id, requestId, reply, message });
   },
 
-  answerQuestion(requestId, answers) {
-    set((s) => ({ questionQueue: s.questionQueue.filter((r) => r.id !== requestId) }));
-    void window.cozy.replyQuestion({ requestId, answers });
+  answerQuestion(requestId, answers, sessionId) {
+    const id = sessionId ?? get().activeId;
+    if (!id) return;
+    set((state) => updateView(state, id, (view) => ({
+      ...view,
+      questionQueue: view.questionQueue.filter((request) => request.id !== requestId),
+    })));
+    void window.cozy.replyQuestion({ sessionId: id, requestId, answers });
   },
 
-  rejectQuestion(requestId) {
-    set((s) => ({ questionQueue: s.questionQueue.filter((r) => r.id !== requestId) }));
-    void window.cozy.replyQuestion({ requestId, answers: null });
+  rejectQuestion(requestId, sessionId) {
+    const id = sessionId ?? get().activeId;
+    if (!id) return;
+    set((state) => updateView(state, id, (view) => ({
+      ...view,
+      questionQueue: view.questionQueue.filter((request) => request.id !== requestId),
+    })));
+    void window.cozy.replyQuestion({ sessionId: id, requestId, answers: null });
   },
 
   systemNote(text, error) {
-    set((s) => ({
+    const id = get().activeId;
+    if (!id) return;
+    set((state) => updateView(state, id, (view) => ({
+      ...view,
       items: [
-        ...s.items,
-        { id: `note-${s.items.length}`, kind: error ? "error" : "system", text },
+        ...view.items,
+        { id: `note-${view.items.length}`, kind: error ? "error" : "system", text },
       ],
-    }));
+    })));
   },
 
   async newTerminal() {
