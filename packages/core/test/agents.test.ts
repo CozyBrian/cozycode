@@ -88,20 +88,13 @@ describe("deriveSubagentRuleset", () => {
     expect(evaluateRule("task", "general", ruleset).action).toBe("deny");
   });
 
-  test("explore retains parent-permitted read and safe shell commands", () => {
+  test("explore retains reads but denies every shell command", () => {
     const explore = BUILTIN_AGENTS.find((agent) => agent.name === "explore")!;
     const ruleset = deriveSubagentRuleset(DEFAULT_RULESET, explore);
     expect(evaluateRule("read", "apps/desktop/package.json", ruleset).action).toBe("allow");
-    expect(evaluateRule("bash", "ls apps/desktop", ruleset).action).toBe("allow");
-    expect(evaluateRule("bash", "find apps/desktop", ruleset).action).toBe("allow");
-    expect(evaluateRule("bash", "rm -rf build", ruleset).action).toBe("deny");
-  });
-
-  test("explore retains an explicit parent denial for a safe shell command", () => {
-    const explore = BUILTIN_AGENTS.find((agent) => agent.name === "explore")!;
-    const base = mergeRulesets(DEFAULT_RULESET, rulesetFromConfig({ bash: { "ls *": "deny" } }));
-    const ruleset = deriveSubagentRuleset(base, explore);
     expect(evaluateRule("bash", "ls apps/desktop", ruleset).action).toBe("deny");
+    expect(evaluateRule("bash", "find apps/desktop -delete", ruleset).action).toBe("deny");
+    expect(evaluateRule("bash", "rm -rf build", ruleset).action).toBe("deny");
   });
 
   test("general inherits the parent base but still can't spawn subagents", () => {

@@ -31,6 +31,11 @@ import { applyPatchTool } from "./apply-patch.ts";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyToolDef = ToolDef<any>;
 
+export const PLAN_MODE_SHELL_DENIAL_MESSAGE =
+  "Plan mode is active, so shell commands are unavailable. Use the dedicated read and search " +
+  "tools for inspection, or include the proposed command in your plan; the user can switch to " +
+  "build mode to run it.";
+
 export const TOOL_DEFS: AnyToolDef[] = [
   readFileTool,
   writeFileTool,
@@ -101,6 +106,11 @@ function describePermission(
   }
 }
 
+function planModeDenial(request: AskInput): string | undefined {
+  if (request.permission === "edit") return PLAN_MODE_DENIAL_MESSAGE;
+  return request.permission === "bash" ? PLAN_MODE_SHELL_DENIAL_MESSAGE : undefined;
+}
+
 export interface BuildToolsOptions {
   ctx: ToolContext;
   permissions: PermissionService;
@@ -150,20 +160,19 @@ export function buildTools(options: BuildToolsOptions): ToolSet {
         // Interactive tools do their own user interaction; skip the permission gate.
         if (!def.interactive) {
           const request = describePermission(def.name, args, def.summarize(args));
+          const deniedBeforeAsk = getMode() === "plan" ? planModeDenial(request) : undefined;
+          if (deniedBeforeAsk) return { denied: true, message: deniedBeforeAsk };
+
           try {
             await permissions.ask({
               ...request,
               tool: { callId: callOptions.toolCallId, toolName: def.name },
             });
           } catch (err) {
-            // In plan mode an edit is denied by the plan overlay; surface the
-            // plan-specific guidance rather than the raw rule message.
-            if (
-              err instanceof PermissionDeniedError &&
-              getMode() === "plan" &&
-              request.permission === "edit"
-            ) {
-              return { denied: true, message: PLAN_MODE_DENIAL_MESSAGE };
+            // Surface plan-specific guidance rather than the raw matching rule.
+            if (err instanceof PermissionDeniedError && getMode() === "plan") {
+              const message = planModeDenial(request);
+              if (message) return { denied: true, message };
             }
             if (
               err instanceof PermissionDeniedError ||
@@ -174,6 +183,11 @@ export function buildTools(options: BuildToolsOptions): ToolSet {
             }
             throw err;
           }
+
+          // A build-mode approval may have been pending when the session switched
+          // to plan mode. Recheck before crossing the side-effect boundary.
+          const deniedAfterAsk = getMode() === "plan" ? planModeDenial(request) : undefined;
+          if (deniedAfterAsk) return { denied: true, message: deniedAfterAsk };
         }
 
         return def.run(args, {

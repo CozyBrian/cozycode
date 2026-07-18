@@ -16,6 +16,18 @@ export interface CommandContext {
   openProviderPicker(): void;
   /** Open the session switcher when the frontend supports multiple sessions. */
   openSessionPicker?(): void;
+  /** Undo the most recent turn in the active session when supported. */
+  undo?(): void;
+  /** Restore the most recently undone turn in the active session when supported. */
+  redo?(): void;
+  /** Fork the active session when supported. */
+  forkSession?(): void;
+  /** Delete the active session when supported. */
+  deleteSession?(): void;
+  /** Open the active session's message timeline when supported. */
+  openTimeline?(): void;
+  /** Open the composer in an editor when supported. */
+  openEditor?(): void;
   /** Open a title editor for the active session when supported. */
   openRenameSession?(): void;
   /** Export the active session to Markdown. An optional path selects the destination. */

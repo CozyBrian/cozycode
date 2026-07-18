@@ -19,6 +19,7 @@ import {
   rulesetFromConfig,
 } from "../src/index.ts";
 import type { Session } from "../src/session.ts";
+import { PLAN_MODE_SHELL_DENIAL_MESSAGE } from "../src/tools/index.ts";
 
 /**
  * End-to-end coverage of the Session pipeline (model -> tool loop -> permission
@@ -337,12 +338,17 @@ describe("Session (integration, mock model)", () => {
     expect(promptText(prompts)).not.toContain(BUILD_SWITCH_REMINDER);
   });
 
-  test("unknown shell command in plan mode under ask policy invokes approval", async () => {
+  test("unknown shell command in plan mode is denied without approval", async () => {
     const session = createSession(config({ bash: "ask" }, "plan"), {
       model: twoStepShellModel("bun run build"),
     });
 
     const events = await runTurn(session, "try a shell command", "reject");
-    expect(events.some((e) => e.type === "permission-asked")).toBe(true);
+    expect(events.some((e) => e.type === "permission-asked")).toBe(false);
+    const result = events.find((e) => e.type === "tool-result");
+    expect(result && "result" in result && result.result).toEqual({
+      denied: true,
+      message: PLAN_MODE_SHELL_DENIAL_MESSAGE,
+    });
   });
 });

@@ -67,6 +67,7 @@
         "@cozycode/commands": "workspace:*",
         "@cozycode/core": "workspace:*",
         "@cozycode/protocol": "workspace:*",
+        "@cozycode/sessions": "workspace:*",
         "@opentui/core": "^0.4.3",
         "@opentui/react": "^0.4.3",
         "diff": "^8.0.2",
@@ -105,6 +106,10 @@
     },
     "packages/protocol": {
       "name": "@cozycode/protocol",
+      "version": "0.0.0",
+    },
+    "packages/sessions": {
+      "name": "@cozycode/sessions",
       "version": "0.0.0",
     },
   },
@@ -171,6 +176,8 @@
     "@cozycode/desktop": ["@cozycode/desktop@workspace:apps/desktop"],
 
     "@cozycode/protocol": ["@cozycode/protocol@workspace:packages/protocol"],
+
+    "@cozycode/sessions": ["@cozycode/sessions@workspace:packages/sessions"],
 
     "@cozycode/tui": ["@cozycode/tui@workspace:apps/tui"],
 

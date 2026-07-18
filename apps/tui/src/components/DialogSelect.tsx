@@ -44,7 +44,7 @@ export function DialogSelect<T>({
   maxVisible = 12,
 }: Props<T>) {
   const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState(0);
+  const [selected, setSelected] = useState(() => Math.max(0, options.findIndex((option) => option.current)));
   const scroll = useRef<ScrollBoxRenderable | null>(null);
 
   const filtered = useMemo(() => {
@@ -97,15 +97,20 @@ export function DialogSelect<T>({
   };
 
   useKeyboard((key) => {
+    const handled = ["escape", "up", "down", "pageup", "pagedown", "home", "end", "return", "kpenter"]
+      .includes(key.name);
+    if (!handled) return;
+    key.preventDefault();
+    key.stopPropagation();
     if (key.name === "escape") return onCancel();
     if (key.name === "up") return move(-1);
     if (key.name === "down") return move(1);
     if (key.name === "pageup") return setSelected((s) => Math.max(0, s - listHeight));
     if (key.name === "pagedown")
-      return setSelected((s) => Math.min(filtered.length - 1, s + listHeight));
+      return setSelected((s) => Math.max(0, Math.min(filtered.length - 1, s + listHeight)));
     if (key.name === "home") return setSelected(0);
     if (key.name === "end") return setSelected(Math.max(0, filtered.length - 1));
-    if (key.name === "return") {
+    if (key.name === "return" || key.name === "kpenter") {
       const option = filtered[selected];
       if (option) onSelect(option.value);
     }
@@ -156,7 +161,10 @@ export function DialogSelect<T>({
                     key={`o${row.index}`}
                     option={row.option}
                     active={row.index === selected}
+                    id={`dialog-select-option-${row.index}`}
                     width={width - 6}
+                    onHover={() => setSelected(row.index)}
+                    onSelect={() => onSelect(row.option.value)}
                   />
                 ),
               )
@@ -175,18 +183,28 @@ export function DialogSelect<T>({
 function OptionRow<T>({
   option,
   active,
+  id,
   width,
+  onHover,
+  onSelect,
 }: {
   option: SelectItem<T>;
   active: boolean;
+  id: string;
   width: number;
+  onHover: () => void;
+  onSelect: () => void;
 }) {
   const fg = active ? theme.bg : theme.text;
   return (
     <box
+      id={id}
       flexDirection="row"
       width={width}
       backgroundColor={active ? theme.primary : undefined}
+      onMouseOver={onHover}
+      onMouseDown={onHover}
+      onMouseUp={onSelect}
     >
       <text fg={option.current ? (active ? theme.bg : theme.primary) : fg}>
         {option.current ? "● " : "  "}

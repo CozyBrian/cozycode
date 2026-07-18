@@ -26,8 +26,16 @@ export function DialogPrompt({
   const [value, setValue] = useState(initialValue);
 
   useKeyboard((key) => {
-    if (key.name === "escape") onCancel();
-    if (key.name === "return" && (allowEmpty || value.trim())) onSubmit(value);
+    if (key.name === "escape") {
+      key.preventDefault();
+      key.stopPropagation();
+      onCancel();
+    }
+    if ((key.name === "return" || key.name === "kpenter") && (allowEmpty || value.trim())) {
+      key.preventDefault();
+      key.stopPropagation();
+      onSubmit(value);
+    }
   });
 
   return (

@@ -55,19 +55,12 @@ describe("DEFAULT_RULESET", () => {
     expect(evaluateRule("edit", "a.ts", DEFAULT_RULESET).action).toBe("ask");
   });
 
-  test("safe shell commands are allowed (incl. bare form)", () => {
-    expect(evalBash("git status")).toBe("allow");
-    expect(evalBash("git status --short")).toBe("allow");
-    expect(evalBash("ls -la")).toBe("allow");
-    expect(evalBash("bun run test")).toBe("allow");
-    expect(evalBash("git config --get user.name")).toBe("allow");
-  });
-
-  test("mutating / unknown shell commands ask", () => {
+  test("all shell commands ask by default", () => {
+    expect(evalBash("git status")).toBe("ask");
+    expect(evalBash("ls -la")).toBe("ask");
+    expect(evalBash("bun run test")).toBe("ask");
     expect(evalBash("rm -rf x")).toBe("ask");
     expect(evalBash("git commit -m x")).toBe("ask");
-    expect(evalBash("git config user.name x")).toBe("ask");
-    expect(evalBash("bun run build")).toBe("ask");
   });
 });
 

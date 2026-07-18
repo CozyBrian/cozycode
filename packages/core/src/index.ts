@@ -41,10 +41,28 @@ export {
   type ProviderCatalog,
 } from "./models-dev.ts";
 export { OAuthService, type OAuthFlow } from "./oauth.ts";
+export {
+  openWorkspaceSnapshotEngine,
+  type WorkspaceSnapshotEngine,
+  type WorkspaceSnapshotOptions,
+  type WorkspaceSnapshot,
+  type WorkspaceCheckpoint,
+  type SnapshotChange,
+  type PathFingerprint,
+  type SnapshotOmission,
+  type SnapshotUnsupportedReason,
+  type SnapshotSkippedReason,
+  type OpenWorkspaceSnapshotResult,
+  type CaptureSnapshotResult,
+  type FingerprintResult,
+  type CheckpointResult,
+  type RestoreSnapshotResult,
+} from "./snapshot/index.ts";
 import { auth as providerAuth } from "./providers.ts";
 import { OAuthService } from "./oauth.ts";
 export const oauth = new OAuthService(providerAuth);
 export { buildTools, TOOL_DEFS } from "./tools/index.ts";
+export { execShell, type ShellResult } from "./tools/shell.ts";
 export { resolveInWorkspace } from "./tools/paths.ts";
 export {
   DEFAULT_SYSTEM_PROMPT,

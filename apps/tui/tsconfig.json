@@ -4,7 +4,7 @@
     "lib": ["ES2023", "DOM"],
     "jsx": "react-jsx",
     "jsxImportSource": "@opentui/react",
-    "types": ["node"]
+    "types": ["node", "bun"]
   },
   "include": ["src"]
 }
