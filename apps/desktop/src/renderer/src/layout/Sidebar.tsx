@@ -97,8 +97,6 @@ export function Sidebar() {
   const activeId = useApp((s) => s.activeId);
   const closeSettings = useApp((s) => s.closeSettings);
   const shouldReduceMotion = useReducedMotion();
-  const [searching, setSearching] = useState(false);
-  const [query, setQuery] = useState("");
   const [collapsedRoots, setCollapsedRoots] = useState<Set<string>>(() => {
     if (settings?.collapseProjectGroupsOnStartup === false) return new Set();
     return new Set([
@@ -115,9 +113,8 @@ export function Sidebar() {
     // Subagent (child) sessions are reached via their parent's task card, not the
     // top-level list.
     const top = sessions.filter((s) => !s.parentID);
-    const q = query.trim().toLowerCase();
-    return q ? top.filter((s) => s.title.toLowerCase().includes(q)) : top;
-  }, [sessions, query]);
+    return top;
+  }, [sessions]);
 
   const { projectSessions, chats } = useMemo(() => {
     const byProject = new Map<string, SessionMeta[]>();
@@ -238,22 +235,9 @@ export function Sidebar() {
         <ActionRow
           icon={<SearchIcon />}
           label="Search"
-          active={searching}
-          onClick={() => setSearching((v) => !v)}
+          onClick={() => useApp.getState().setCommandPalette(true, "sessions")}
         />
       </nav>
-
-      {searching && (
-        <div className="app-no-drag px-3 pb-2">
-          <input
-            autoFocus
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search chats…"
-            className="w-full rounded-lg bg-white/6 px-2.5 py-1.5 text-sm outline-none ring-1 ring-transparent focus:ring-ring"
-          />
-        </div>
-      )}
 
       <div className="mt-3 min-h-0 flex-1 overflow-y-auto px-3 pb-2">
         <Reorder.Group
@@ -316,7 +300,7 @@ export function Sidebar() {
 
         {filtered.length === 0 && (
           <div className="px-2 py-6 text-center text-sm text-muted-foreground">
-            {query ? "No matching chats" : "No chats yet"}
+            No chats yet
           </div>
         )}
       </div>

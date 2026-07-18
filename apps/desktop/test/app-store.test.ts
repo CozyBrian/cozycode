@@ -64,6 +64,7 @@ beforeEach(() => {
     running: false,
     busy: false,
     backgroundComplete: false,
+    backgroundError: false,
     preset: "ask",
     model: null,
     effort: undefined,

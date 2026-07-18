@@ -19,6 +19,7 @@ import type {
 } from "@cozycode/protocol";
 import {
   IPC,
+  type AppSettings,
   type AppSettingsInput,
   type AddressedPermissionReply,
   type AddressedQuestionReply,
@@ -26,6 +27,7 @@ import {
   type NativeCommand,
   type PermissionPreset,
 } from "../shared/ipc.ts";
+import { DESKTOP_COMMANDS, resolveShortcut, toElectronAccelerator } from "../shared/desktop-commands.ts";
 import { SettingsStore } from "./settings.ts";
 import { SessionManager } from "./session-manager.ts";
 import { ProviderBridge } from "./providers.ts";
@@ -79,8 +81,12 @@ function sendNativeCommand(command: NativeCommand): void {
   void ensureWindow();
 }
 
-function installNativeMenus(): void {
+function installNativeMenus(currentSettings: AppSettings | null): void {
   const command = (value: NativeCommand) => () => sendNativeCommand(value);
+  const accelerator = (id: NativeCommand) => {
+    const definition = DESKTOP_COMMANDS.find((item) => item.id === id)!;
+    return toElectronAccelerator(resolveShortcut(definition, currentSettings?.shortcutOverrides));
+  };
   const template: MenuItemConstructorOptions[] = [
     {
       label: "CozyCode",
@@ -89,8 +95,8 @@ function installNativeMenus(): void {
         { type: "separator" },
         {
           label: "Settings…",
-          accelerator: "CmdOrCtrl+,",
-          click: command("open-settings"),
+          accelerator: accelerator("settings.open"),
+          click: command("settings.open"),
         },
         { type: "separator" },
         { role: "services" },
@@ -105,27 +111,27 @@ function installNativeMenus(): void {
     {
       label: "File",
       submenu: [
-        { label: "New Chat", accelerator: "CmdOrCtrl+N", click: command("new-chat") },
+        { label: "New Chat", accelerator: accelerator("chat.new"), click: command("chat.new") },
         {
           label: "New Standalone Chat",
-          accelerator: "CmdOrCtrl+Shift+N",
-          click: command("new-standalone-chat"),
+          accelerator: accelerator("chat.newStandalone"),
+          click: command("chat.newStandalone"),
         },
         {
           label: "Open Project…",
-          accelerator: "CmdOrCtrl+O",
-          click: command("open-project"),
+          accelerator: accelerator("project.open"),
+          click: command("project.open"),
         },
         {
           label: "New Terminal",
-          accelerator: "CmdOrCtrl+Shift+J",
-          click: command("new-terminal"),
+          accelerator: accelerator("terminal.new"),
+          click: command("terminal.new"),
         },
         { type: "separator" },
         {
           label: "Export Current Session…",
-          accelerator: "CmdOrCtrl+Shift+E",
-          click: command("export-current-session"),
+          accelerator: accelerator("session.export"),
+          click: command("session.export"),
         },
         { type: "separator" },
         { role: "close" },
@@ -149,23 +155,23 @@ function installNativeMenus(): void {
       submenu: [
         {
           label: "Toggle Sidebar",
-          accelerator: "CmdOrCtrl+B",
-          click: command("toggle-sidebar"),
+          accelerator: accelerator("view.sidebar.toggle"),
+          click: command("view.sidebar.toggle"),
         },
         {
           label: "Toggle Terminal",
-          accelerator: "CmdOrCtrl+J",
-          click: command("toggle-terminal"),
+          accelerator: accelerator("view.terminal.toggle"),
+          click: command("view.terminal.toggle"),
         },
         {
           label: "Toggle Content Panel",
-          accelerator: "CmdOrCtrl+\\",
-          click: command("toggle-content-panel"),
+          accelerator: accelerator("view.contentPanel.toggle"),
+          click: command("view.contentPanel.toggle"),
         },
         {
           label: "Cycle Reasoning Effort",
-          accelerator: "CmdOrCtrl+Shift+T",
-          click: command("cycle-effort"),
+          accelerator: accelerator("reasoning.effort.cycle"),
+          click: command("reasoning.effort.cycle"),
         },
         { type: "separator" },
         { role: "resetZoom" },
@@ -184,11 +190,11 @@ function installNativeMenus(): void {
     {
       label: "Navigate",
       submenu: [
-        { label: "Back", accelerator: "CmdOrCtrl+[", click: command("navigate-back") },
+        { label: "Back", accelerator: accelerator("navigation.back"), click: command("navigation.back") },
         {
           label: "Forward",
-          accelerator: "CmdOrCtrl+]",
-          click: command("navigate-forward"),
+          accelerator: accelerator("navigation.forward"),
+          click: command("navigation.forward"),
         },
       ],
     },
@@ -204,7 +210,8 @@ function installNativeMenus(): void {
     {
       role: "help",
       submenu: [
-        { label: "CozyCode Help", click: command("show-help") },
+        { label: "Command Palette…", accelerator: accelerator("palette.open"), click: command("palette.open") },
+        { label: "CozyCode Help", accelerator: accelerator("help.open"), click: command("help.open") },
         { type: "separator" },
         { label: "CozyCode on GitHub", click: () => void shell.openExternal(repositoryUrl) },
       ],
@@ -216,12 +223,12 @@ function installNativeMenus(): void {
   if (isMac) {
     app.dock?.setMenu(
       Menu.buildFromTemplate([
-        { label: "New Chat", click: command("new-chat") },
-        { label: "New Standalone Chat", click: command("new-standalone-chat") },
-        { label: "Open Project…", click: command("open-project") },
-        { label: "New Terminal", click: command("new-terminal") },
+        { label: "New Chat", click: command("chat.new") },
+        { label: "New Standalone Chat", click: command("chat.newStandalone") },
+        { label: "Open Project…", click: command("project.open") },
+        { label: "New Terminal", click: command("terminal.new") },
         { type: "separator" },
-        { label: "Settings…", click: command("open-settings") },
+        { label: "Settings…", click: command("settings.open") },
       ]),
     );
   }
@@ -315,7 +322,12 @@ function createWindow(): void {
 
 function registerIpc(): void {
   ipcMain.handle(IPC.settingsGet, () => settings.getPublic());
-  ipcMain.handle(IPC.settingsSave, (_e, input: AppSettingsInput) => settings.save(input));
+  ipcMain.handle(IPC.settingsSave, async (_e, input: AppSettingsInput) => {
+    const saved = await settings.save(input);
+    installNativeMenus(saved);
+    return saved;
+  });
+  ipcMain.handle(IPC.appQuit, () => app.quit());
 
   ipcMain.handle(IPC.pickWorkspace, async () => {
     const result = await dialog.showOpenDialog({
@@ -454,7 +466,7 @@ if (!hasSingleInstanceLock) {
       .migrateProviderCredentials(registry, auth)
       .catch((error) => console.error("Provider credential migration failed", error));
     registerIpc();
-    installNativeMenus();
+    installNativeMenus(await settings.getPublic());
     app.setAboutPanelOptions({
       applicationName: "CozyCode",
       applicationVersion: app.getVersion(),

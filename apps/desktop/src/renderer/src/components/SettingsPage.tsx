@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Check } from "lucide-react";
 import { useApp } from "../store/app-store";
 import { ProvidersSection } from "./settings/ProvidersSection";
+import { KeyboardSection } from "./settings/KeyboardSection";
 import { SETTINGS_SECTIONS } from "./settings/sections";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -103,7 +104,7 @@ export function SettingsPage() {
               <h1 className="text-2xl font-semibold tracking-tight">{activeSection.label}</h1>
               <p className="mt-2 text-base text-muted-foreground">{activeSection.description}</p>
             </div>
-            {section === "providers" ? <ProvidersSection /> : section === "workspace" || section === "general" ? (
+            {section === "providers" ? <ProvidersSection /> : section === "keyboard" ? <KeyboardSection /> : section === "workspace" || section === "general" ? (
               <section className="border-y border-border/70">
                 <SettingRow title={workspaceTitle} description="New chats start in this folder.">
                   <div className="flex w-120 max-w-[45vw] gap-2">

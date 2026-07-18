@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { AuthStore, ProviderRegistry } from "@cozycode/core";
 import type { AppSettings, AppSettingsInput } from "../shared/ipc.ts";
 import { workspaceRoots } from "../shared/workspaces.ts";
+import { sanitizeShortcutOverrides } from "../shared/desktop-commands.ts";
 
 interface StoredSettings extends Partial<AppSettings> {
   providerName?: string;
@@ -44,6 +45,7 @@ export class SettingsStore {
       startupView: stored.startupView ?? "continue-last-session",
       collapseProjectGroupsOnStartup: stored.collapseProjectGroupsOnStartup ?? true,
       lastToggledWorkspaceRoot: stored.lastToggledWorkspaceRoot,
+      shortcutOverrides: sanitizeShortcutOverrides(stored.shortcutOverrides),
     };
     this.cache = settings;
     // Existing installations had one workspace root. Preserve it as their first
@@ -66,6 +68,7 @@ export class SettingsStore {
         startupView: input.startupView ?? "empty",
         collapseProjectGroupsOnStartup: input.collapseProjectGroupsOnStartup ?? true,
         lastToggledWorkspaceRoot: input.lastToggledWorkspaceRoot,
+        shortcutOverrides: sanitizeShortcutOverrides(input.shortcutOverrides),
       };
       await mkdir(app.getPath("userData"), { recursive: true });
       await writeFile(this.file, JSON.stringify(next, null, 2), "utf8");

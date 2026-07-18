@@ -12,6 +12,7 @@ import type {
   SessionEvent,
   ProviderList,
 } from "@cozycode/protocol";
+import { DESKTOP_COMMANDS, type DesktopCommandId, type ShortcutOverrides } from "./desktop-commands.ts";
 
 export type {
   CustomProviderInput,
@@ -41,6 +42,8 @@ export interface AppSettings {
   collapseProjectGroupsOnStartup?: boolean;
   /** Most recently expanded or collapsed project; global New chat targets it. */
   lastToggledWorkspaceRoot?: string;
+  /** User overrides for application-wide native menu shortcuts. */
+  shortcutOverrides?: ShortcutOverrides;
 }
 
 export interface AppSettingsInput extends AppSettings {}
@@ -156,6 +159,7 @@ export interface GitStatus {
 export const IPC = {
   settingsGet: "settings:get",
   settingsSave: "settings:save",
+  appQuit: "app:quit",
   pickWorkspace: "dialog:pick-workspace",
   sessionSend: "session:send",
   sessionShell: "session:shell",
@@ -205,23 +209,8 @@ export const IPC = {
   dockBadge: "native:dock-badge",
 } as const;
 
-export const NATIVE_COMMANDS = [
-  "new-chat",
-  "new-standalone-chat",
-  "open-project",
-  "export-current-session",
-  "open-settings",
-  "toggle-sidebar",
-  "toggle-terminal",
-  "toggle-content-panel",
-  "cycle-effort",
-  "navigate-back",
-  "navigate-forward",
-  "new-terminal",
-  "show-help",
-] as const;
-
-export type NativeCommand = (typeof NATIVE_COMMANDS)[number];
+export type NativeCommand = DesktopCommandId;
+export const NATIVE_COMMANDS: readonly NativeCommand[] = DESKTOP_COMMANDS.map((command) => command.id);
 
 export function isNativeCommand(value: unknown): value is NativeCommand {
   return typeof value === "string" && (NATIVE_COMMANDS as readonly string[]).includes(value);
@@ -229,8 +218,10 @@ export function isNativeCommand(value: unknown): value is NativeCommand {
 
 /** The typed API exposed on `window.cozy` by the preload script. */
 export interface CozyApi {
+  readonly platform: string;
   getSettings(): Promise<AppSettings | null>;
   saveSettings(input: AppSettingsInput): Promise<AppSettings>;
+  quit(): Promise<void>;
   pickWorkspace(): Promise<string | null>;
 
   // session-addressed actions

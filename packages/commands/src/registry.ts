@@ -26,7 +26,7 @@ export const COMMAND_DEFS: CommandDef[] = [
     aliases: ["session", "resume", "continue"],
     category: "session",
     description: "Search and switch open sessions",
-    run: (ctx) => ctx.openSessionPicker?.(),
+    run: (ctx) => runOptional(ctx, "sessions", ctx.openSessionPicker),
   }),
   defineCommand({
     name: "undo",
@@ -75,7 +75,7 @@ export const COMMAND_DEFS: CommandDef[] = [
     title: "Rename session",
     category: "session",
     description: "Rename the active session",
-    run: (ctx) => ctx.openRenameSession?.(),
+    run: (ctx) => runOptional(ctx, "rename", ctx.openRenameSession),
   }),
   defineCommand({
     name: "export",
@@ -83,7 +83,10 @@ export const COMMAND_DEFS: CommandDef[] = [
     category: "session",
     description: "Export the active session as Markdown",
     args: [{ name: "path", description: "Optional output path" }],
-    run: (ctx, args) => ctx.exportSession?.(args.trim() || undefined),
+    run: (ctx, args) => {
+      if (ctx.exportSession) ctx.exportSession(args.trim() || undefined);
+      else ctx.notify("error", "The /export command is not supported by this frontend.");
+    },
   }),
   defineCommand({
     name: "model",

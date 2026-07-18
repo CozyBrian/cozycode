@@ -8,13 +8,11 @@ import {
   rankSlashCommands,
   replacePromptTrigger,
   runCommandInput,
-  resolveModelRef,
-  type CommandContext,
   type FileReferenceTrigger,
   type CommandTrigger,
 } from "@cozycode/commands";
-import { effortsForModel } from "@cozycode/commands";
 import { useApp } from "../store/app-store";
+import { DESKTOP_SLASH_COMMANDS, desktopCommandContext } from "../command-context.ts";
 import { CommandSuggestions, type ComposerSuggestion } from "./CommandSuggestions";
 import { EffortPicker } from "./EffortPicker";
 import { ModelPicker } from "./ModelPicker";
@@ -55,7 +53,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
   const suggestions = useMemo<ComposerSuggestion[]>(() => {
     if (!trigger) return [];
     if (trigger.kind === "file") return fileSuggestions;
-    return rankSlashCommands(listCommands(), trigger.query, { limit: 8 }).map(({ item }) => ({
+    return rankSlashCommands(listCommands().filter((command) => DESKTOP_SLASH_COMMANDS.has(command.name)), trigger.query, { limit: 8 }).map(({ item }) => ({
       kind: "command",
       command: item,
     }));
@@ -166,40 +164,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
     el.style.height = `${Math.min(el.scrollHeight, 220)}px`;
   }, [value]);
 
-  const commandCtx: CommandContext = useMemo(() => {
-    const s = useApp.getState();
-    return {
-      setMode: (mode) => s.setMode(mode),
-      newSession: () => void s.createSession(),
-      openModelPicker: () => s.setModelPickerOpen(true),
-      openProviderPicker: () => s.openSettings("providers"),
-      setModel: (id) => {
-        if (!s.providers) return s.systemNote("Provider data is not loaded.", true);
-        const result = resolveModelRef(id, s.providers);
-        if ("error" in result) s.systemNote(result.error, true);
-        else s.setModel(result);
-      },
-      setEffort: (level) => {
-        const efforts = effortsForModel(s.providers ?? { all: [], connected: [] }, s.model);
-        if (efforts.length === 0) return s.systemNote("This model has no reasoning-effort control.", true);
-        const normalized = level.toLowerCase();
-        if (normalized === "default" || normalized === "") return s.setEffort(undefined);
-        if (!efforts.includes(normalized)) {
-          return s.systemNote(`Unknown effort "${level}". Available: ${efforts.join(", ")}.`, true);
-        }
-        s.setEffort(normalized);
-      },
-      openEffortPicker: () => {
-        const efforts = effortsForModel(s.providers ?? { all: [], connected: [] }, s.model);
-        if (efforts.length === 0) return s.systemNote("This model has no reasoning-effort control.", true);
-        s.setEffortPickerOpen(true);
-      },
-      showHelp: () => s.setHelpOpen(true),
-      exit: () => window.close(),
-      send: (text) => void s.send(text),
-      notify: (kind, text) => s.systemNote(text, kind === "error"),
-    };
-  }, []);
+  const commandCtx = useMemo(desktopCommandContext, []);
 
   const acceptSuggestion = (suggestion: ComposerSuggestion) => {
     if (!trigger) return;

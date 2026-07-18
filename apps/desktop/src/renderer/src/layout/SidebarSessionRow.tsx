@@ -17,6 +17,7 @@ export function SidebarSessionRow({ session, now }: { session: SessionMeta; now:
   const indicator = useApp((s) => {
     if (s.activeId === session.id) return null;
     const view = s.sessionViews[session.id];
+    if (view?.backgroundError) return "error";
     if (view?.backgroundComplete) return "complete";
     if (view?.running) return "running";
     return null;
@@ -30,6 +31,8 @@ export function SidebarSessionRow({ session, now }: { session: SessionMeta; now:
       ? `${session.title}, running in background`
       : indicator === "complete"
         ? `${session.title}, completed in background`
+        : indicator === "error"
+          ? `${session.title}, failed in background`
         : session.title;
 
   const commit = () => {
@@ -48,6 +51,7 @@ export function SidebarSessionRow({ session, now }: { session: SessionMeta; now:
             active ? "bg-sidebar-accent text-sidebar-foreground" : "hover:bg-white/5",
             indicator === "running" && "background-session-outline",
             indicator === "complete" && "completed-session-outline",
+            indicator === "error" && "ring-1 ring-inset ring-destructive/70",
           )}
           aria-label={statusLabel}
           onClick={() => !editing && void activate(session.id)}

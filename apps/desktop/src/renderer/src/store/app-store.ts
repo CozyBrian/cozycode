@@ -50,6 +50,8 @@ export interface SessionViewState {
   busy: boolean;
   /** A completed background turn has not been viewed yet. */
   backgroundComplete: boolean;
+  /** The unread background completion ended in an error. */
+  backgroundError: boolean;
   turnUsage: TokenUsage | null;
   sessionUsage: SessionUsage;
   preset: PermissionPreset;
@@ -107,6 +109,8 @@ export interface AppState {
   settingsForwardAvailable: boolean;
   settingsSection: SettingsSection;
   helpOpen: boolean;
+  commandPaletteOpen: boolean;
+  commandPaletteScope: "all" | "sessions";
   modelPickerOpen: boolean;
   effortPickerOpen: boolean;
   editingUserTurn: EditingUserTurn | null;
@@ -132,6 +136,7 @@ export interface AppState {
   running: boolean;
   busy: boolean;
   backgroundComplete: boolean;
+  backgroundError: boolean;
   /** Usage from the most recent finished turn (for the context meter). */
   turnUsage: TokenUsage | null;
   /** Accumulated usage across the active session's turns. */
@@ -179,6 +184,7 @@ export interface AppState {
   openSettings(section?: SettingsSection): void;
   closeSettings(): void;
   setHelpOpen(open: boolean): void;
+  setCommandPalette(open: boolean, scope?: "all" | "sessions"): void;
   setModelPickerOpen(open: boolean): void;
   setEffortPickerOpen(open: boolean): void;
   setInput(v: string): void;
@@ -232,6 +238,7 @@ export type SettingsSection =
   | "workspace"
   | "permissions"
   | "appearance"
+  | "keyboard"
   | "advanced";
 
 const presetToMode = (p: PermissionPreset): AgentMode => (p === "plan" ? "plan" : "build");
@@ -268,6 +275,7 @@ function emptyActiveState(
     running: false,
     busy: false,
     backgroundComplete: false,
+    backgroundError: false,
     turnUsage: null,
     sessionUsage: EMPTY_USAGE,
     preset: "ask",
@@ -325,6 +333,7 @@ function viewFromSnapshot(
     running: snapshot.running,
     busy: snapshot.running,
     backgroundComplete: false,
+    backgroundError: false,
     ...sumUsage(snapshot.records),
     preset: snapshot.meta.preset,
     model: snapshot.meta.model,
@@ -342,6 +351,7 @@ function activeView(state: AppState): SessionViewState {
     running: state.running,
     busy: state.busy,
     backgroundComplete: state.backgroundComplete,
+    backgroundError: state.backgroundError,
     turnUsage: state.turnUsage,
     sessionUsage: state.sessionUsage,
     preset: state.preset,
@@ -417,6 +427,8 @@ export const useApp = create<AppState>((set, get) => ({
   settingsForwardAvailable: false,
   settingsSection: "general",
   helpOpen: false,
+  commandPaletteOpen: false,
+  commandPaletteScope: "all",
   modelPickerOpen: false,
   effortPickerOpen: false,
   editingUserTurn: null,
@@ -435,6 +447,7 @@ export const useApp = create<AppState>((set, get) => ({
   running: false,
   busy: false,
   backgroundComplete: false,
+  backgroundError: false,
   turnUsage: null,
   sessionUsage: EMPTY_USAGE,
   preset: "ask",
@@ -517,6 +530,7 @@ export const useApp = create<AppState>((set, get) => ({
           state.activeId !== sessionId
         ) {
           next.backgroundComplete = true;
+          next.backgroundError = event.type === "error";
         }
         return next;
       }),
@@ -565,6 +579,11 @@ export const useApp = create<AppState>((set, get) => ({
         : state,
     ),
   setHelpOpen: (open) => set({ helpOpen: open }),
+  setCommandPalette: (open, scope = "all") => set({
+    commandPaletteOpen: open,
+    commandPaletteScope: scope,
+    ...(open ? { helpOpen: false, modelPickerOpen: false, effortPickerOpen: false } : {}),
+  }),
   setModelPickerOpen: (open) => set({ modelPickerOpen: open }),
   setEffortPickerOpen: (open) => set({ effortPickerOpen: open }),
   setInput: (input) => {
@@ -759,10 +778,11 @@ export const useApp = create<AppState>((set, get) => ({
         settingsOpen: false,
         settingsForwardAvailable: false,
         backgroundComplete: false,
+        backgroundError: false,
         sessionViews: state.sessionViews[id]
           ? {
               ...state.sessionViews,
-              [id]: { ...state.sessionViews[id], backgroundComplete: false },
+              [id]: { ...state.sessionViews[id], backgroundComplete: false, backgroundError: false },
             }
           : state.sessionViews,
       }));
@@ -777,7 +797,7 @@ export const useApp = create<AppState>((set, get) => ({
     const nextHistoryIndex = recordHistory ? nextHistory.length - 1 : (historyIndex ?? sessionHistory.indexOf(id));
     const cached = state.sessionViews[id];
     const meta = state.sessions.find((session) => session.id === id);
-    const optimisticView = cached ? { ...cached, backgroundComplete: false } : (meta
+    const optimisticView = cached ? { ...cached, backgroundComplete: false, backgroundError: false } : (meta
       ? viewFromSnapshot({
           meta,
           records: [],

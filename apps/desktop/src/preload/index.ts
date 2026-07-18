@@ -32,8 +32,10 @@ ipcRenderer.on(IPC.nativeCommand, (_event, value: unknown) => {
 });
 
 const api: CozyApi = {
+  platform: process.platform,
   getSettings: () => ipcRenderer.invoke(IPC.settingsGet),
   saveSettings: (input: AppSettingsInput) => ipcRenderer.invoke(IPC.settingsSave, input),
+  quit: () => ipcRenderer.invoke(IPC.appQuit),
   pickWorkspace: () => ipcRenderer.invoke(IPC.pickWorkspace),
 
   send: (sessionId: string, message: string, turnId: string) =>
