@@ -1,4 +1,9 @@
-import { defineCommand, type CommandDef } from "./types.ts";
+import { defineCommand, type CommandContext, type CommandDef } from "./types.ts";
+
+function runOptional(ctx: CommandContext, name: string, capability: (() => void) | undefined): void {
+  if (capability) capability();
+  else ctx.notify("error", `The /${name} command is not supported by this frontend.`);
+}
 
 /**
  * Built-in commands — the single source of truth for every consumer (parser,
@@ -18,10 +23,52 @@ export const COMMAND_DEFS: CommandDef[] = [
   defineCommand({
     name: "sessions",
     title: "Switch session",
-    aliases: ["session"],
+    aliases: ["session", "resume", "continue"],
     category: "session",
     description: "Search and switch open sessions",
     run: (ctx) => ctx.openSessionPicker?.(),
+  }),
+  defineCommand({
+    name: "undo",
+    title: "Undo previous turn",
+    category: "session",
+    description: "Undo the most recent turn",
+    run: (ctx) => runOptional(ctx, "undo", ctx.undo),
+  }),
+  defineCommand({
+    name: "redo",
+    title: "Redo turn",
+    category: "session",
+    description: "Restore the most recently undone turn",
+    run: (ctx) => runOptional(ctx, "redo", ctx.redo),
+  }),
+  defineCommand({
+    name: "fork",
+    title: "Fork session",
+    category: "session",
+    description: "Fork the active session",
+    run: (ctx) => runOptional(ctx, "fork", ctx.forkSession),
+  }),
+  defineCommand({
+    name: "delete",
+    title: "Delete session",
+    category: "session",
+    description: "Delete the active session",
+    run: (ctx) => runOptional(ctx, "delete", ctx.deleteSession),
+  }),
+  defineCommand({
+    name: "timeline",
+    title: "Message timeline",
+    category: "session",
+    description: "Open the active session's message timeline",
+    run: (ctx) => runOptional(ctx, "timeline", ctx.openTimeline),
+  }),
+  defineCommand({
+    name: "editor",
+    title: "Open editor",
+    category: "session",
+    description: "Open the composer in an editor",
+    run: (ctx) => runOptional(ctx, "editor", ctx.openEditor),
   }),
   defineCommand({
     name: "rename",
@@ -96,7 +143,7 @@ export const COMMAND_DEFS: CommandDef[] = [
   defineCommand({
     name: "quit",
     title: "Quit",
-    aliases: ["exit"],
+    aliases: ["exit", "q"],
     category: "app",
     description: "Exit cozycode",
     run: (ctx) => ctx.exit(),

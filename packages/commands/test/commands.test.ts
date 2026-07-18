@@ -16,7 +16,15 @@ function recordingCtx() {
     setMode: (m) => calls.push(`setMode:${m}`),
     setModel: (id) => calls.push(`setModel:${id}`),
     newSession: () => calls.push("newSession"),
+    openSessionPicker: () => calls.push("openSessionPicker"),
+    undo: () => calls.push("undo"),
+    redo: () => calls.push("redo"),
+    forkSession: () => calls.push("forkSession"),
+    deleteSession: () => calls.push("deleteSession"),
+    openTimeline: () => calls.push("openTimeline"),
+    openEditor: () => calls.push("openEditor"),
     openModelPicker: () => calls.push("openModelPicker"),
+    openProviderPicker: () => calls.push("openProviderPicker"),
     showHelp: () => calls.push("showHelp"),
     exit: () => calls.push("exit"),
     send: (t) => calls.push(`send:${t}`),
@@ -47,6 +55,23 @@ describe("parseCommandInput", () => {
   test("null when only a slash", () => {
     expect(parseCommandInput("/")).toBeNull();
   });
+
+  test("parses the new command names and OpenCode aliases", () => {
+    const names = [
+      "undo",
+      "redo",
+      "fork",
+      "delete",
+      "timeline",
+      "editor",
+      "resume",
+      "continue",
+      "q",
+    ];
+    for (const name of names) {
+      expect(parseCommandInput(`/${name}`)).toEqual({ name, args: "" });
+    }
+  });
 });
 
 describe("tokenizeArgs", () => {
@@ -70,6 +95,28 @@ describe("findCommand", () => {
     expect(findCommand("clear")?.name).toBe("new");
     expect(findCommand("models")?.name).toBe("model");
     expect(findCommand("exit")?.name).toBe("quit");
+  });
+
+  test("registers the new session actions", () => {
+    for (const name of ["undo", "redo", "fork", "delete", "timeline", "editor"]) {
+      expect(findCommand(name)?.name).toBe(name);
+    }
+  });
+
+  test("resolves OpenCode-compatible session and quit aliases", () => {
+    expect(findCommand("resume")?.name).toBe("sessions");
+    expect(findCommand("continue")?.name).toBe("sessions");
+    expect(findCommand("q")?.name).toBe("quit");
+  });
+
+  test("canonical names and aliases do not conflict", () => {
+    const names = new Set<string>();
+    for (const command of listCommands({ includeHidden: true })) {
+      for (const name of [command.name, ...(command.aliases ?? [])]) {
+        expect(names.has(name)).toBe(false);
+        names.add(name);
+      }
+    }
   });
 
   test("case-insensitive", () => {
@@ -107,6 +154,53 @@ describe("runCommandInput", () => {
     const noId = recordingCtx();
     await runCommandInput(noId.ctx, "/model");
     expect(noId.calls).toEqual(["openModelPicker"]);
+  });
+
+  test("dispatches the new session actions through available capabilities", async () => {
+    const { ctx, calls } = recordingCtx();
+    for (const name of ["undo", "redo", "fork", "delete", "timeline", "editor"]) {
+      await runCommandInput(ctx, `/${name}`);
+    }
+    expect(calls).toEqual([
+      "undo",
+      "redo",
+      "forkSession",
+      "deleteSession",
+      "openTimeline",
+      "openEditor",
+    ]);
+  });
+
+  test("new session actions report unavailable frontend capabilities", async () => {
+    const recorded = recordingCtx();
+    const ctx: CommandContext = {
+      ...recorded.ctx,
+      undo: undefined,
+      redo: undefined,
+      forkSession: undefined,
+      deleteSession: undefined,
+      openTimeline: undefined,
+      openEditor: undefined,
+    };
+    for (const name of ["undo", "redo", "fork", "delete", "timeline", "editor"]) {
+      await runCommandInput(ctx, `/${name}`);
+    }
+    expect(recorded.calls).toEqual([
+      "notify:error:The /undo command is not supported by this frontend.",
+      "notify:error:The /redo command is not supported by this frontend.",
+      "notify:error:The /fork command is not supported by this frontend.",
+      "notify:error:The /delete command is not supported by this frontend.",
+      "notify:error:The /timeline command is not supported by this frontend.",
+      "notify:error:The /editor command is not supported by this frontend.",
+    ]);
+  });
+
+  test("dispatches the new aliases", async () => {
+    const { ctx, calls } = recordingCtx();
+    await runCommandInput(ctx, "/resume");
+    await runCommandInput(ctx, "/continue");
+    await runCommandInput(ctx, "/q");
+    expect(calls).toEqual(["openSessionPicker", "openSessionPicker", "exit"]);
   });
 
   test("unknown command notifies and is still handled", async () => {

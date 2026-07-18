@@ -19,8 +19,12 @@ async function main(): Promise<void> {
     backgroundColor: "#0a0a0a",
   });
   const root = createRoot(renderer);
-  const exit = () => {
+  let exiting = false;
+  const exit = async () => {
+    if (exiting) return;
+    exiting = true;
     root.unmount();
+    await Promise.resolve();
     renderer.destroy();
     process.exit(0);
   };

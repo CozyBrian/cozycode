@@ -38,88 +38,30 @@ export function mergeRulesets(...rulesets: Ruleset[]): Ruleset {
 }
 
 /**
- * Plan-mode overlay: denies file mutations. Merged over the base ruleset when
- * the session is in plan mode so edits are refused regardless of the base.
+ * Plan-mode overlay: edits and shell are always denied. Shell command names are
+ * not a security boundary because arguments, config, and hooks can add side
+ * effects; plan-mode inspection uses the dedicated read and search tools.
  */
-export const PLAN_RULESET: Ruleset = rulesetFromConfig({ edit: "deny" });
-
-/** Curated shell commands that do not mutate the workspace or external state. */
-export const READONLY_BASH_RULESET: Ruleset = rulesetFromConfig({
-  bash: {
-    // Read-only / non-mutating programs.
-    "pwd *": "allow",
-    "ls *": "allow",
-    "tree *": "allow",
-    "find *": "allow",
-    "rg *": "allow",
-    "grep *": "allow",
-    "cat *": "allow",
-    "head *": "allow",
-    "tail *": "allow",
-    "less *": "allow",
-    "more *": "allow",
-    "wc *": "allow",
-    "sort *": "allow",
-    "uniq *": "allow",
-    "which *": "allow",
-    "whoami *": "allow",
-    "date *": "allow",
-    "echo *": "allow",
-    "printenv *": "allow",
-    "node *": "allow",
-    "tsx *": "allow",
-    "tsc *": "allow",
-    // read-only git subcommands
-    "git status *": "allow",
-    "git diff *": "allow",
-    "git log *": "allow",
-    "git show *": "allow",
-    "git branch *": "allow",
-    "git rev-parse *": "allow",
-    "git ls-files *": "allow",
-    "git ls-remote *": "allow",
-    "git remote *": "allow",
-    "git blame *": "allow",
-    "git grep *": "allow",
-    // git config reads only
-    "git config --get *": "allow",
-    "git config --list *": "allow",
-    "git config -l *": "allow",
-    // package-runner read-only scripts
-    "bun test *": "allow",
-    "bun run test *": "allow",
-    "bun run typecheck *": "allow",
-    "npm test *": "allow",
-    "npm run test *": "allow",
-    "npm run typecheck *": "allow",
-    "pnpm test *": "allow",
-    "pnpm run test *": "allow",
-    "pnpm run typecheck *": "allow",
-    "yarn test *": "allow",
-    "yarn run test *": "allow",
-    "yarn run typecheck *": "allow",
-  },
+export const PLAN_RULESET: Ruleset = rulesetFromConfig({
+  edit: "deny",
+  bash: "deny",
 });
 
 /**
  * Safe-by-default ruleset. Reading and searching run freely; edits and shell
- * commands ask, except for a curated set of read-only shell commands that are
- * allowed outright. Users override any of this via config, which is merged last.
+ * commands ask. Users override any of this via config, which is merged last.
  */
-export const DEFAULT_RULESET: Ruleset = mergeRulesets(
-  rulesetFromConfig({
-    "*": "ask",
-    read: "allow",
-    search: "allow",
-    edit: "ask",
-    // Delegating to a subagent is allowed by default (overridable to ask/deny).
-    task: "allow",
-    // Maintaining the todo checklist is harmless bookkeeping — never prompt.
-    todowrite: "allow",
-    bash: "ask",
-  }),
-  READONLY_BASH_RULESET,
-);
+export const DEFAULT_RULESET: Ruleset = rulesetFromConfig({
+  "*": "ask",
+  read: "allow",
+  search: "allow",
+  edit: "ask",
+  // Delegating to a subagent is allowed by default (overridable to ask/deny).
+  task: "allow",
+  // Maintaining the todo checklist is harmless bookkeeping — never prompt.
+  todowrite: "allow",
+  bash: "ask",
+});
 
 /** Full-access ruleset: everything allowed (the "full" desktop preset). */
 export const FULL_ACCESS_RULESET: Ruleset = mergeRulesets(

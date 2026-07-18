@@ -64,16 +64,24 @@ export function ProviderDialog({ providers, onChange, onCancel }: Props) {
 
   useKeyboard((key) => {
     if (state.step === "authorizing" && key.name === "escape") {
+      key.preventDefault();
+      key.stopPropagation();
       state.attempt.controller.abort();
       setState({ step: "method", provider: state.provider });
       return;
     }
     if (state.step !== "oauth") return;
     if (key.name === "escape") {
+      key.preventDefault();
+      key.stopPropagation();
       state.flow.cancel();
       setState({ step: "method", provider: state.provider });
     }
-    if (key.name === "o") void openBrowser(state.start.url).catch(() => {});
+    if (key.name === "o") {
+      key.preventDefault();
+      key.stopPropagation();
+      void openBrowser(state.start.url).catch(() => {});
+    }
   });
 
   if (state.step === "list") {

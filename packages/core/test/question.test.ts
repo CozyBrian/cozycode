@@ -45,11 +45,17 @@ describe("QuestionService", () => {
 
   test("rejectAll clears everything", async () => {
     const { service } = makeService();
-    // Attach the rejection handlers before rejecting so the rejections are caught.
-    const a = expect(service.ask({ questions: spec })).rejects.toBeInstanceOf(QuestionRejectedError);
-    const b = expect(service.ask({ questions: spec })).rejects.toBeInstanceOf(QuestionRejectedError);
+    const pending = Promise.allSettled([
+      service.ask({ questions: spec }),
+      service.ask({ questions: spec }),
+    ]);
     service.rejectAll();
-    await Promise.all([a, b]);
+    const results = await pending;
+    expect(results).toHaveLength(2);
+    for (const result of results) {
+      expect(result.status).toBe("rejected");
+      if (result.status === "rejected") expect(result.reason).toBeInstanceOf(QuestionRejectedError);
+    }
     expect(service.listPending()).toHaveLength(0);
   });
 

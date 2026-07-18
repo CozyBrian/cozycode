@@ -69,6 +69,9 @@ export class Session {
   private currentMode: AgentMode;
   private currentEffort: string | undefined;
   private abortController: AbortController | null = null;
+  private abortRequested = false;
+  private abortAfterInteraction = false;
+  private terminalEmitted = false;
   private stepCounter = 0;
   private hadPlanTurn = false;
   private buildSwitchPending = false;
@@ -328,6 +331,9 @@ export class Session {
         if (title) this.events.push({ type: "title-change", title });
       });
     }
+    this.abortRequested = false;
+    this.abortAfterInteraction = false;
+    this.terminalEmitted = false;
     this.abortController = new AbortController();
     this.events.push({ type: "session-start", sessionId: this.id });
 
@@ -345,22 +351,33 @@ export class Session {
       const response = await result.response;
       if (response?.messages) this.history.push(...response.messages);
     } catch (err) {
-      this.events.push({
-        type: "error",
-        message: err instanceof Error ? err.message : String(err),
-      });
+      if (this.abortRequested) this.emitAbortFinish();
+      else {
+        this.terminalEmitted = true;
+        this.events.push({
+          type: "error",
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
     } finally {
+      if (this.abortRequested) this.emitAbortFinish();
       this.abortController = null;
     }
   }
 
   /** Abort the in-flight turn, if any. Also rejects any parked permission/question asks. */
   abort(): void {
-    this.abortController?.abort();
+    const hasPendingInteraction =
+      this.permissions.listPending().length > 0 || this.questions.listPending().length > 0;
+    this.abortRequested = true;
+    this.abortAfterInteraction = hasPendingInteraction;
     // Without this, a tool call parked on a pending ask stays suspended forever
     // even after the stream is aborted, keeping the turn open.
     this.permissions.rejectAll();
     this.questions.rejectAll();
+    // Let the tool loop surface the rejected interaction as a terminal tool
+    // result before aborting its stream. Otherwise AI SDK drops that result.
+    if (!hasPendingInteraction) this.abortController?.abort();
     // Cascade to any live subagents so their turns end too.
     for (const child of this.children.values()) child.abort();
   }
@@ -412,6 +429,11 @@ export class Session {
           metadata: this.toolMetadata.get(toolCallId),
         });
         this.toolMetadata.delete(toolCallId);
+        if (this.abortAfterInteraction) {
+          this.abortAfterInteraction = false;
+          this.emitAbortFinish();
+          this.abortController?.abort();
+        }
       }
         break;
       case "reasoning-start":
@@ -440,18 +462,31 @@ export class Session {
         this.events.push({ type: "step-finish", stepNumber: ++this.stepCounter });
         break;
       case "error":
-        this.events.push({ type: "error", message: String(part.error) });
+        if (this.abortRequested) this.emitAbortFinish();
+        else if (!this.terminalEmitted) {
+          this.terminalEmitted = true;
+          this.events.push({ type: "error", message: String(part.error) });
+        }
         break;
       case "finish":
-        this.events.push({
-          type: "finish",
-          reason: String(part.finishReason ?? "stop"),
-          usage: mapUsage(part.totalUsage),
-        });
+        if (!this.terminalEmitted) {
+          this.terminalEmitted = true;
+          this.events.push({
+            type: "finish",
+            reason: String(part.finishReason ?? "stop"),
+            usage: mapUsage(part.totalUsage),
+          });
+        }
         break;
       default:
         break; // start, text-start, tool-input-*, etc. are not surfaced
     }
+  }
+
+  private emitAbortFinish(): void {
+    if (this.terminalEmitted) return;
+    this.terminalEmitted = true;
+    this.events.push({ type: "finish", reason: "abort" });
   }
 }
 
