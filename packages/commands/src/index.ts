@@ -10,6 +10,25 @@ export { resolveModelRef, type ResolveModelRefResult } from "./model-ref.ts";
 export { modelKey, effortsForModel, resolveEffort, cycleEffort } from "./effort.ts";
 export { SPINNER_VERBS, pickSpinnerVerb } from "./spinner-verbs.ts";
 export { formatTranscriptMarkdown, sessionMarkdownFilename, type MarkdownTranscriptItem } from "./transcript-markdown.ts";
+export {
+  rankFileReferences,
+  rankSlashCommands,
+  type FileReferenceCandidate,
+  type RankedSuggestion,
+  type RankOptions,
+  type SlashCommandCandidate,
+} from "./prompt-rank.ts";
+export {
+  detectCommandTrigger,
+  detectFileReferenceTrigger,
+  detectPromptTrigger,
+  detectShellTrigger,
+  replacePromptTrigger,
+  type CommandTrigger,
+  type FileReferenceTrigger,
+  type PromptTrigger,
+  type ShellTrigger,
+} from "./prompt-triggers.ts";
 
 // Index of names + aliases → definition, built once at module load.
 // future: register additional command providers here (user config, markdown

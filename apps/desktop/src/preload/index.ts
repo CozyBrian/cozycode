@@ -38,6 +38,10 @@ const api: CozyApi = {
 
   send: (sessionId: string, message: string, turnId: string) =>
     ipcRenderer.invoke(IPC.sessionSend, { sessionId, message, turnId }),
+  shell: (sessionId: string, command: string, turnId: string) =>
+    ipcRenderer.invoke(IPC.sessionShell, { sessionId, command, turnId }),
+  searchWorkspaceReferences: (sessionId: string, query: string) =>
+    ipcRenderer.invoke(IPC.sessionReferenceSearch, { sessionId, query }),
   abort: (sessionId: string) => ipcRenderer.invoke(IPC.sessionAbort, sessionId),
   setMode: (sessionId: string, mode: AgentMode) => ipcRenderer.invoke(IPC.sessionSetMode, { sessionId, mode }),
   setModel: (sessionId: string, ref: ModelRef) => ipcRenderer.invoke(IPC.sessionSetModel, { sessionId, ref }),

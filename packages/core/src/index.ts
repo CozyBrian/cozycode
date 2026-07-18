@@ -63,6 +63,18 @@ import { OAuthService } from "./oauth.ts";
 export const oauth = new OAuthService(providerAuth);
 export { buildTools, TOOL_DEFS } from "./tools/index.ts";
 export { execShell, type ShellResult } from "./tools/shell.ts";
+export {
+  canonicalizeWorkspace,
+  expandWorkspaceReferences,
+  indexWorkspaceReferences,
+  parseFileReferences,
+  resolveWorkspaceReference,
+  DEFAULT_WORKSPACE_REFERENCE_LIMITS,
+  type WorkspaceReferenceCandidate,
+  type WorkspaceReferenceExpansion,
+  type WorkspaceReferenceIndex,
+  type WorkspaceReferenceWarning,
+} from "./workspace-references.ts";
 export { resolveInWorkspace } from "./tools/paths.ts";
 export {
   DEFAULT_SYSTEM_PROMPT,

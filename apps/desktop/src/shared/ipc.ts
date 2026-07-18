@@ -84,6 +84,17 @@ export interface EditTurnRequest {
   text: string;
 }
 
+export interface WorkspaceReferenceSuggestion {
+  path: string;
+  directory: boolean;
+}
+
+export interface SessionOperationResult {
+  ok: boolean;
+  error?: string;
+  warnings?: string[];
+}
+
 /** Result of activating/creating a session: metadata + transcript to replay. */
 export interface SessionSnapshot {
   meta: SessionMeta;
@@ -147,6 +158,8 @@ export const IPC = {
   settingsSave: "settings:save",
   pickWorkspace: "dialog:pick-workspace",
   sessionSend: "session:send",
+  sessionShell: "session:shell",
+  sessionReferenceSearch: "session:reference-search",
   sessionAbort: "session:abort",
   sessionSetMode: "session:set-mode",
   sessionSetModel: "session:set-model",
@@ -221,7 +234,9 @@ export interface CozyApi {
   pickWorkspace(): Promise<string | null>;
 
   // session-addressed actions
-  send(sessionId: string, message: string, turnId: string): Promise<{ ok: boolean; error?: string }>;
+  send(sessionId: string, message: string, turnId: string): Promise<SessionOperationResult>;
+  shell(sessionId: string, command: string, turnId: string): Promise<SessionOperationResult>;
+  searchWorkspaceReferences(sessionId: string, query: string): Promise<WorkspaceReferenceSuggestion[]>;
   abort(sessionId: string): Promise<void>;
   setMode(sessionId: string, mode: AgentMode): Promise<void>;
   setModel(sessionId: string, ref: ModelRef): Promise<void>;

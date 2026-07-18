@@ -328,6 +328,13 @@ function registerIpc(): void {
     if (!manager) return { ok: false, error: "No active window." };
     return manager.send(payload.sessionId, payload.message, payload.turnId);
   });
+  ipcMain.handle(IPC.sessionShell, (_e, payload: { sessionId: string; command: string; turnId: string }) => {
+    if (!manager) return { ok: false, error: "No active window." };
+    return manager.shell(payload.sessionId, payload.command, payload.turnId);
+  });
+  ipcMain.handle(IPC.sessionReferenceSearch, (_e, payload: { sessionId: string; query: string }) =>
+    manager?.searchWorkspaceReferences(payload.sessionId, payload.query) ?? [],
+  );
   ipcMain.handle(IPC.sessionAbort, (_e, sessionId: string) => manager?.abort(sessionId));
   ipcMain.handle(IPC.sessionSetMode, (_e, payload: { sessionId: string; mode: AgentMode }) => manager?.setMode(payload.sessionId, payload.mode));
   ipcMain.handle(IPC.sessionSetModel, (_e, payload: { sessionId: string; ref: ModelRef }) => manager?.setModel(payload.sessionId, payload.ref));

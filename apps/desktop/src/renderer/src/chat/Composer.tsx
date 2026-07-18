@@ -1,28 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, Check, LoaderCircle, Mic, Plus, Square } from "lucide-react";
 import {
-  matchPrefix,
+  detectCommandTrigger,
+  detectFileReferenceTrigger,
+  listCommands,
   parseCommandInput,
+  rankSlashCommands,
+  replacePromptTrigger,
   runCommandInput,
   resolveModelRef,
   type CommandContext,
-  type CommandDef,
+  type FileReferenceTrigger,
+  type CommandTrigger,
 } from "@cozycode/commands";
 import { effortsForModel } from "@cozycode/commands";
 import { useApp } from "../store/app-store";
-import { CommandSuggestions } from "./CommandSuggestions";
+import { CommandSuggestions, type ComposerSuggestion } from "./CommandSuggestions";
 import { EffortPicker } from "./EffortPicker";
 import { ModelPicker } from "./ModelPicker";
 import { PermissionPill } from "./PermissionPill";
 import { confirmsEscapeStop, ESCAPE_STOP_WINDOW_MS } from "./escape-stop";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-
-// A slash-command completion is active when the whole input is one "/token".
-function commandQuery(text: string): string | null {
-  const match = /^\/(\S*)$/.exec(text);
-  return match ? match[1]! : null;
-}
 
 export function Composer({ centered = false }: { centered?: boolean }) {
   const input = useApp((s) => s.input);
@@ -43,17 +42,44 @@ export function Composer({ centered = false }: { centered?: boolean }) {
   const [editText, setEditText] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
   const [stopPrimed, setStopPrimed] = useState(false);
+  const [cursor, setCursor] = useState(0);
+  const [fileSuggestions, setFileSuggestions] = useState<ComposerSuggestion[]>([]);
+  const referenceRequest = useRef(0);
   const stopPrimedAt = useRef<number | null>(null);
   const stopPrimeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const value = editingTurn ? editText : input;
-  const query = editingTurn ? null : commandQuery(input);
-  const suggestions = query === null ? [] : matchPrefix(query);
+  const shellMode = !editingTurn && input.startsWith("!");
+  const trigger: CommandTrigger | FileReferenceTrigger | undefined = editingTurn || shellMode
+    ? undefined
+    : detectFileReferenceTrigger(input, cursor) ?? detectCommandTrigger(input, cursor);
+  const suggestions = useMemo<ComposerSuggestion[]>(() => {
+    if (!trigger) return [];
+    if (trigger.kind === "file") return fileSuggestions;
+    return rankSlashCommands(listCommands(), trigger.query, { limit: 8 }).map(({ item }) => ({
+      kind: "command",
+      command: item,
+    }));
+  }, [fileSuggestions, trigger?.kind, trigger?.query, trigger?.start, trigger?.end]);
   const showSuggestions = suggestions.length > 0 && !dismissed;
 
   useEffect(() => {
     setSelected(0);
     setDismissed(false);
   }, [input]);
+
+  useEffect(() => {
+    if (!trigger || trigger.kind !== "file" || !activeId) {
+      setFileSuggestions([]);
+      return;
+    }
+    const request = ++referenceRequest.current;
+    void window.cozy.searchWorkspaceReferences(activeId, trigger.query).then((files) => {
+      if (request !== referenceRequest.current) return;
+      setFileSuggestions(files.map((file) => ({ kind: "file", file })));
+    }).catch(() => {
+      if (request === referenceRequest.current) setFileSuggestions([]);
+    });
+  }, [activeId, trigger?.kind, trigger?.query]);
 
   useEffect(() => {
     if (!editingTurn) {
@@ -175,9 +201,26 @@ export function Composer({ centered = false }: { centered?: boolean }) {
     };
   }, []);
 
-  const acceptSuggestion = (command: CommandDef) => {
-    setInput(`/${command.name} `);
-    textareaRef.current?.focus();
+  const acceptSuggestion = (suggestion: ComposerSuggestion) => {
+    if (!trigger) return;
+    let value: string;
+    let suffix: string | undefined;
+    if (suggestion.kind === "command" && trigger.kind === "command") {
+      value = suggestion.command.name;
+    } else if (suggestion.kind === "file" && trigger.kind === "file") {
+      const range = suggestion.file.directory ? "" : extractLineRange(trigger.query);
+      value = `${suggestion.file.path}${suggestion.file.directory && !suggestion.file.path.endsWith("/") ? "/" : ""}${range}`;
+      if (suggestion.file.directory) suffix = "";
+    } else {
+      return;
+    }
+    const replacement = replacePromptTrigger(input, trigger, value, suffix);
+    setInput(replacement.text);
+    setCursor(replacement.cursor);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(replacement.cursor, replacement.cursor);
+    });
   };
 
   const submit = async () => {
@@ -192,9 +235,14 @@ export function Composer({ centered = false }: { centered?: boolean }) {
       }
       return;
     }
-    const text = input.trim();
+    const directShell = input.startsWith("!");
+    const text = directShell ? input.slice(1).trim() : input.trim();
     if (!text || busy) return;
     setInput("");
+    if (directShell) {
+      await useApp.getState().send(text, "shell");
+      return;
+    }
     if (parseCommandInput(text)) {
       await runCommandInput(commandCtx, text);
       return;
@@ -204,6 +252,8 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 
   const placeholder = editingTurn
     ? "Edit your message…"
+    : shellMode
+      ? "Run a shell command…"
     : preset === "plan"
       ? "Research a plan (read-only)…"
       : "Do anything";
@@ -232,6 +282,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
         className={cn(
           "app-no-drag flex flex-col gap-2 rounded-2xl border border-white/10 bg-surface-raised p-3 shadow-2xl shadow-black/30 backdrop-blur-xl focus-within:border-white/20",
           editingTurn && "border-primary/35",
+          shellMode && "border-primary/35",
         )}
       >
         {editingTurn ? (
@@ -252,17 +303,38 @@ export function Composer({ centered = false }: { centered?: boolean }) {
             </button>
           </div>
         ) : null}
+        {shellMode ? (
+          <div className="px-1 text-[10px] font-semibold tracking-[0.16em] text-primary">SHELL</div>
+        ) : null}
         <textarea
           ref={textareaRef}
           value={value}
           placeholder={placeholder}
           rows={1}
-          onChange={(e) => editingTurn ? setEditText(e.target.value) : setInput(e.target.value)}
+          onChange={(e) => {
+            if (editingTurn) setEditText(e.target.value);
+            else setInput(e.target.value);
+            setCursor(e.target.selectionStart);
+          }}
+          onSelect={(e) => setCursor(e.currentTarget.selectionStart)}
+          onClick={(e) => setCursor(e.currentTarget.selectionStart)}
           className="max-h-55 w-full resize-none bg-transparent px-1 text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground"
           onKeyDown={(e) => {
             if (editingTurn && e.key === "Escape") {
               e.preventDefault();
               if (!savingEdit) setEditingTurn(null);
+              return;
+            }
+            if (shellMode && e.key === "Escape") {
+              e.preventDefault();
+              setInput(input.slice(1));
+              setCursor(Math.max(0, cursor - 1));
+              return;
+            }
+            if (shellMode && e.key === "Backspace" && input === "!") {
+              e.preventDefault();
+              setInput("");
+              setCursor(0);
               return;
             }
             if (showSuggestions) {
@@ -278,8 +350,8 @@ export function Composer({ centered = false }: { centered?: boolean }) {
               }
               if (e.key === "Tab" || e.key === "Enter") {
                 e.preventDefault();
-                const command = suggestions[selected];
-                if (command) acceptSuggestion(command);
+                const suggestion = suggestions[selected];
+                if (suggestion) acceptSuggestion(suggestion);
                 return;
               }
               if (e.key === "Escape") {
@@ -370,4 +442,8 @@ export function Composer({ centered = false }: { centered?: boolean }) {
       </form>
     </div>
   );
+}
+
+function extractLineRange(query: string): string {
+  return /#\d+(?:-\d*)?$/.exec(query)?.[0] ?? "";
 }

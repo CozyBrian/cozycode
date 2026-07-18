@@ -206,7 +206,7 @@ export interface AppState {
   setEditingUserTurn(turn: EditingUserTurn | null): void;
   editUserTurn(turnId: string, text: string): Promise<boolean>;
 
-  send(text: string): Promise<void>;
+  send(text: string, kind?: "prompt" | "shell"): Promise<void>;
   abort(): void;
   setPreset(preset: PermissionPreset): void;
   setMode(mode: AgentMode): void;
@@ -1007,7 +1007,7 @@ export const useApp = create<AppState>((set, get) => ({
     return true;
   },
 
-  async send(text) {
+  async send(text, kind = "prompt") {
     let id = get().activeId;
     const pendingConfiguration = id
       ? null
@@ -1035,19 +1035,34 @@ export const useApp = create<AppState>((set, get) => ({
       })));
     }
     const turnId = crypto.randomUUID();
+    const displayText = kind === "shell" ? `!${text}` : text;
     set((state) => updateView(state, id, (view) => ({
       ...view,
-      items: [...view.items, userItem(text, turnId)],
+      items: [...view.items, userItem(displayText, turnId)],
       running: true,
       busy: true,
     })));
-    const res = await window.cozy.send(id, text, turnId);
+    const res = kind === "shell"
+      ? await window.cozy.shell(id, text, turnId)
+      : await window.cozy.send(id, text, turnId);
     set((state) => updateView(state, id, (view) => ({ ...view, running: false, busy: false })));
     if (!res.ok) {
       set((state) => updateView(state, id, (view) => ({
         ...view,
         busy: false,
         items: [...view.items, { id: `err-${view.items.length}`, kind: "error", text: res.error ?? "Unknown error" }],
+      })));
+    } else if (res.warnings?.length) {
+      set((state) => updateView(state, id, (view) => ({
+        ...view,
+        items: [
+          ...view.items,
+          ...res.warnings!.map((warning, index) => ({
+            id: `warning-${view.items.length}-${index}`,
+            kind: "system" as const,
+            text: warning,
+          })),
+        ],
       })));
     }
     void get().refreshSessions();

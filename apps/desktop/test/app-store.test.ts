@@ -431,6 +431,38 @@ describe("workspace and Settings navigation", () => {
     expect(sent).toEqual({ sessionId: "created", message: "hello" });
   });
 
+  test("routes direct shell turns separately and displays the leading bang", async () => {
+    let shell: { sessionId: string; command: string } | undefined;
+    installApi({
+      listSessions: async () => [session("active", "/project")],
+      shell: async (sessionId, command) => {
+        shell = { sessionId, command };
+        return { ok: true };
+      },
+    });
+    await useApp.getState().bootstrap();
+
+    await useApp.getState().send("git status", "shell");
+
+    expect(shell).toEqual({ sessionId: "active", command: "git status" });
+    expect(useApp.getState().items.at(-1)).toMatchObject({ kind: "user", text: "!git status" });
+  });
+
+  test("keeps workspace-reference warnings on their owning session", async () => {
+    installApi({
+      listSessions: async () => [session("active", "/project")],
+      send: async () => ({ ok: true, warnings: ["Could not read @missing.ts"] }),
+    });
+    await useApp.getState().bootstrap();
+
+    await useApp.getState().send("Read @missing.ts");
+
+    expect(useApp.getState().items.at(-1)).toMatchObject({
+      kind: "system",
+      text: "Could not read @missing.ts",
+    });
+  });
+
   test("applies empty-view model and mode choices before sending", async () => {
     const applied: string[] = [];
     installApi({

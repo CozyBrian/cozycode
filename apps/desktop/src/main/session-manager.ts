@@ -1,14 +1,21 @@
 import { app, type WebContents } from "electron";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { formatTranscriptMarkdown, type MarkdownTranscriptItem } from "@cozycode/commands";
+import { formatTranscriptMarkdown, rankFileReferences, type MarkdownTranscriptItem } from "@cozycode/commands";
 import {
+  canonicalizeWorkspace,
   createSession,
   createModel,
+  execShell,
+  expandWorkspaceReferences,
+  indexWorkspaceReferences,
   loadAgents,
   mergeRulesets,
   rulesetFromConfig,
+  type ModelMessage,
   type Session,
+  type ShellResult,
+  type WorkspaceReferenceIndex,
 } from "@cozycode/core";
 import type {
   AgentMode,
@@ -21,6 +28,7 @@ import {
   type AddressedPermissionReply,
   type AddressedQuestionReply,
   type PermissionPreset,
+  type SessionOperationResult,
   type SessionMeta,
   type SessionRecord,
   type SessionSnapshot,
@@ -53,6 +61,10 @@ export class SessionManager {
   private readonly closingRuntimes = new Map<string, Promise<void>>();
   private readonly pendingSends = new Set<string>();
   private readonly abortRequested = new Set<string>();
+  private readonly shellControllers = new Map<string, AbortController>();
+  private readonly shellOperations = new Map<string, Promise<SessionOperationResult>>();
+  private readonly workspaceTails = new Map<string, Promise<void>>();
+  private readonly referenceIndexes = new Map<string, { at: number; index: WorkspaceReferenceIndex }>();
   private activationSequence = 0;
   private disposePromise: Promise<void> | null = null;
   private closing = false;
@@ -254,12 +266,39 @@ export class SessionManager {
       this.terminals.setCwd(null);
       this.git.setCwd(null);
     }
+    const shell = this.shellOperations.get(id);
+    if (shell) {
+      this.abortRequested.add(id);
+      this.shellControllers.get(id)?.abort();
+      await shell;
+    }
     const runtime = this.runtimes.get(id) ?? await this.runtimePromises.get(id);
     if (runtime) await this.closeRuntime(id, runtime, true);
     await this.store.remove(id);
     this.notifyChanged();
     if (!wasActive) return null;
     return null;
+  }
+
+  async searchWorkspaceReferences(id: string, query: string) {
+    if (typeof query !== "string" || query.length > 256 || query.includes("\0")) return [];
+    const meta = this.runtimes.get(id)?.meta ?? await this.store.get(id);
+    if (!meta?.workspaceRoot) return [];
+    let root: string;
+    try {
+      root = canonicalizeWorkspace(meta.workspaceRoot);
+    } catch {
+      return [];
+    }
+    const cached = this.referenceIndexes.get(root);
+    const index = cached && Date.now() - cached.at < 5_000
+      ? cached.index
+      : indexWorkspaceReferences(root);
+    if (!cached || cached.index !== index) this.referenceIndexes.set(root, { at: Date.now(), index });
+    return rankFileReferences(index.candidates, query, { limit: 8 }).map(({ item }) => ({
+      path: item.path,
+      directory: item.directory,
+    }));
   }
 
   async rename(id: string, title: string): Promise<void> {
@@ -497,7 +536,7 @@ export class SessionManager {
     message: string,
     turnId: string,
     accepted: boolean,
-  ): Promise<{ ok: boolean; error?: string }> {
+  ): Promise<SessionOperationResult> {
     try {
       const runtime = accepted
         ? await this.createAcceptedTurnRuntime(id)
@@ -505,6 +544,9 @@ export class SessionManager {
       if (runtime.running) return { ok: false, error: "This session is already running." };
       if (this.closing) return { ok: false, error: "The window is closing." };
       await runtime.mutation;
+      const expanded = runtime.meta.workspaceRoot
+        ? expandWorkspaceReferences(message, runtime.meta.workspaceRoot)
+        : { modelText: message, warnings: [] };
       runtime.running = true;
       runtime.lastUsed = Date.now();
       const operation = (async () => {
@@ -524,9 +566,16 @@ export class SessionManager {
           if (!this.web.isDestroyed()) this.web.send(IPC.sessionEvent, { sessionId: id, event });
           return { ok: true };
         }
-        await runtime.session.send(message);
-        await this.store.writeHistory(id, runtime.session.snapshotHistory());
-        return { ok: true };
+        const releaseWorkspace = runtime.meta.preset === "plan"
+          ? undefined
+          : await this.acquireWorkspace(runtime.meta.workspaceRoot ?? homedir());
+        try {
+          await runtime.session.send(expanded.modelText);
+          await this.store.writeHistory(id, runtime.session.snapshotHistory());
+        } finally {
+          releaseWorkspace?.();
+        }
+        return { ok: true, warnings: expanded.warnings.map((warning) => warning.message) };
       })().catch((err) => ({ ok: false, error: err instanceof Error ? err.message : String(err) }));
       runtime.send = operation;
       try {
@@ -544,7 +593,131 @@ export class SessionManager {
   abort(id: string): void {
     if (!this.pendingSends.has(id)) return;
     this.abortRequested.add(id);
+    this.shellControllers.get(id)?.abort();
     this.runtimes.get(id)?.session.abort();
+  }
+
+  shell(id: string, input: string, turnId: string): Promise<SessionOperationResult> {
+    if (this.closing) return Promise.resolve({ ok: false, error: "The window is closing." });
+    if (this.pendingSends.has(id) || this.runtimes.get(id)?.running) {
+      return Promise.resolve({ ok: false, error: "This session is already running." });
+    }
+    const command = (input.startsWith("!") ? input.slice(1) : input).trim();
+    if (!command) return Promise.resolve({ ok: false, error: "The shell command cannot be empty." });
+    if (command.length > 32_768 || command.includes("\0")) {
+      return Promise.resolve({ ok: false, error: "The shell command is too large or invalid." });
+    }
+    this.pendingSends.add(id);
+    const operation = this.runShell(id, command, turnId);
+    this.shellOperations.set(id, operation);
+    void operation.finally(() => {
+      this.pendingSends.delete(id);
+      this.abortRequested.delete(id);
+      this.shellControllers.delete(id);
+      if (this.shellOperations.get(id) === operation) this.shellOperations.delete(id);
+    });
+    return operation;
+  }
+
+  private async runShell(id: string, command: string, turnId: string): Promise<SessionOperationResult> {
+    let releaseWorkspace: (() => void) | undefined;
+    try {
+      const meta = this.runtimes.get(id)?.meta ?? await this.store.get(id);
+      if (!meta) return { ok: false, error: `Unknown session: ${id}` };
+      if (meta.preset === "plan") {
+        return {
+          ok: false,
+          error: "Direct shell commands are disabled in read-only plan mode. Switch to build mode first.",
+        };
+      }
+
+      const existing = this.runtimes.get(id) ?? await this.runtimePromises.get(id);
+      if (existing) {
+        await existing.mutation;
+        existing.stale = true;
+        await this.closeRuntime(id, existing, false);
+      }
+
+      const cwd = meta.workspaceRoot ?? homedir();
+      releaseWorkspace = await this.acquireWorkspace(cwd);
+      const controller = new AbortController();
+      this.shellControllers.set(id, controller);
+      if (this.abortRequested.has(id)) controller.abort();
+      const now = Date.now();
+      meta.messageCount = this.store.appendUserTurn(id, `!${command}`, now, turnId);
+      meta.updatedAt = now;
+      this.notifyChanged();
+
+      const toolCallId = `shell_${turnId}`;
+      this.publishDurableEvent(id, {
+        type: "tool-call-start",
+        toolCallId,
+        toolName: "run_shell",
+        args: { command, cwd },
+      });
+
+      let result: ShellResult;
+      try {
+        result = controller.signal.aborted
+          ? abortedShellResult(command)
+          : await execShell(command, cwd, 60_000, controller.signal);
+      } catch (error) {
+        result = failedShellResult(command, error instanceof Error ? error.message : String(error));
+      }
+      if (controller.signal.aborted && !result.stderr) result = abortedShellResult(command);
+      this.publishDurableEvent(id, {
+        type: "tool-result",
+        toolCallId,
+        toolName: "run_shell",
+        result,
+        isError: result.exitCode !== 0 || result.timedOut,
+      });
+
+      const history = await this.store.readHistory(id) ?? [];
+      await this.store.writeHistory(id, appendShellHistory(history, command, result));
+      const terminal: SessionEvent = controller.signal.aborted
+        ? { type: "finish", reason: "abort" }
+        : result.exitCode === null && !result.timedOut
+          ? { type: "error", message: result.stderr || "The shell could not be started." }
+          : { type: "finish", reason: "stop" };
+      this.publishDurableEvent(id, terminal);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    } finally {
+      releaseWorkspace?.();
+    }
+  }
+
+  private publishDurableEvent(id: string, event: SessionEvent): void {
+    this.store.appendEvent(id, event);
+    if (!this.web.isDestroyed()) this.web.send(IPC.sessionEvent, { sessionId: id, event });
+  }
+
+  private async acquireWorkspace(workspaceRoot: string): Promise<() => void> {
+    let key = workspaceRoot;
+    try {
+      key = canonicalizeWorkspace(workspaceRoot);
+    } catch {
+      // The shell will report an invalid cwd; retain serialization by raw path.
+    }
+    const previous = this.workspaceTails.get(key) ?? Promise.resolve();
+    let releaseCurrent!: () => void;
+    const current = new Promise<void>((resolve) => {
+      releaseCurrent = resolve;
+    });
+    const tail = previous.then(() => current);
+    this.workspaceTails.set(key, tail);
+    await previous;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      releaseCurrent();
+      void tail.finally(() => {
+        if (this.workspaceTails.get(key) === tail) this.workspaceTails.delete(key);
+      });
+    };
   }
 
   private closeRuntime(id: string, runtime: SessionRuntime, abort: boolean): Promise<void> {
@@ -590,6 +763,9 @@ export class SessionManager {
   private async disposeInternal(): Promise<void> {
     this.terminals.dispose();
     this.git.dispose();
+    for (const controller of this.shellControllers.values()) controller.abort();
+    for (const id of this.shellOperations.keys()) this.abortRequested.add(id);
+    await Promise.allSettled(this.shellOperations.values());
     await Promise.allSettled(this.runtimePromises.values());
     await Promise.allSettled(
       [...this.runtimes].map(([id, runtime]) => this.closeRuntime(id, runtime, true)),
@@ -631,4 +807,45 @@ function markdownItems(records: SessionRecord[]): MarkdownTranscriptItem[] {
     }
   }
   return items;
+}
+
+function appendShellHistory(
+  history: ModelMessage[],
+  command: string,
+  result: ShellResult,
+): ModelMessage[] {
+  const output = {
+    stdout: result.stdout,
+    stderr: result.stderr,
+    exitCode: result.exitCode,
+    timedOut: result.timedOut,
+    truncated: result.truncated,
+  };
+  return [
+    ...history,
+    { role: "user", content: `Direct shell command:\n${JSON.stringify(command)}` },
+    { role: "assistant", content: `Direct shell result:\n${JSON.stringify(output)}` },
+  ];
+}
+
+function abortedShellResult(command: string): ShellResult {
+  return {
+    command,
+    exitCode: null,
+    stdout: "",
+    stderr: "Command aborted.",
+    timedOut: false,
+    truncated: false,
+  };
+}
+
+function failedShellResult(command: string, message: string): ShellResult {
+  return {
+    command,
+    exitCode: null,
+    stdout: "",
+    stderr: message,
+    timedOut: false,
+    truncated: false,
+  };
 }
